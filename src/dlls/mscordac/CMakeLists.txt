@@ -71,9 +71,8 @@ if(WIN32)
     # Generate export file
     add_custom_command(TARGET mscordaccore
         PRE_LINK
-        COMMAND lib.exe /OUT:${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/mscordaccore.lib /DEF:${CMAKE_CURRENT_BINARY_DIR}/mscordac.def $<TARGET_FILE:daccess> ${STATIC_LIBRARY_FLAGS} ${CMAKE_CURRENT_BINARY_DIR}/mscordaccore.dir/$<CONFIG>/mscordac.obj
+        COMMAND lib.exe /OUT:"${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/mscordaccore.lib" /DEF:"${CMAKE_CURRENT_BINARY_DIR}/mscordac.def" "$<TARGET_FILE:daccess>" $<$<OR:$<CONFIG:Release>,$<CONFIG:Relwithdebinfo>>:/LTCG> ${STATIC_LIBRARY_FLAGS} "${CMAKE_CURRENT_BINARY_DIR}/mscordaccore.dir/$<CONFIG>/mscordac.obj"
         COMMENT "Generating mscordaccore.exp export file"
-        VERBATIM
     )
 
     set(COREDAC_LIBRARIES

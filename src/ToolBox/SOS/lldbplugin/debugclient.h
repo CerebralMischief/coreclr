@@ -57,7 +57,23 @@ public:
         PULONG size);
 
     HRESULT GetExecutingProcessorType(
-        PULONG Type);
+        PULONG type);
+
+    HRESULT Execute(
+        ULONG outputControl,
+        PCSTR command,
+        ULONG flags);
+
+    HRESULT GetLastEventInformation(
+        PULONG type,
+        PULONG processId,
+        PULONG threadId,
+        PVOID extraInformation,
+        ULONG extraInformationSize,
+        PULONG extraInformationUsed,
+        PSTR description,
+        ULONG descriptionSize,
+        PULONG descriptionUsed);
 
     //----------------------------------------------------------------------------
     // IDebugDataSpaces
@@ -122,6 +138,9 @@ public:
         ULONG loadedImageNameBufferSize,
         PULONG loadedImageNameSize);
 
+    PCSTR GetModuleDirectory(
+        PCSTR name);
+
     //----------------------------------------------------------------------------
     // IDebugSystemObjects
     //----------------------------------------------------------------------------
@@ -166,9 +185,8 @@ public:
     // IDebugClient
     //----------------------------------------------------------------------------
 
+    PCSTR GetCoreClrDirectory();
+
     DWORD_PTR GetExpression(
         PCSTR exp);
-
-    PCSTR GetModuleDirectory(
-        PCSTR name);
 };

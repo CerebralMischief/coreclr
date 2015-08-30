@@ -834,7 +834,7 @@ OPTIMIZECAST:
     }
 
     if (tree->gtOverflow())
-        fgAddCodeRef(compCurBB, bbThrowIndex(compCurBB), ACK_OVERFLOW, fgPtrArgCntCur);
+        fgAddCodeRef(compCurBB, bbThrowIndex(compCurBB), SCK_OVERFLOW, fgPtrArgCntCur);
 
     return tree;
 
@@ -3882,7 +3882,8 @@ void                Compiler::fgMoveOpsLeft(GenTreePtr tree)
 void            Compiler::fgSetRngChkTarget(GenTreePtr  tree,
                                             bool        delay)
 {
-    GenTreeBoundsChk* bndsChk = NULL;
+    GenTreeBoundsChk* bndsChk = nullptr;
+    SpecialCodeKind kind = SCK_RNGCHK_FAIL;
 
 #ifdef FEATURE_SIMD
     if ((tree->gtOper == GT_ARR_BOUNDS_CHECK) || (tree->gtOper == GT_SIMD_CHK))
@@ -3891,6 +3892,7 @@ void            Compiler::fgSetRngChkTarget(GenTreePtr  tree,
 #endif // FEATURE_SIMD
     {
         bndsChk = tree->AsBoundsChk();
+        kind = tree->gtBoundsChk.gtThrowKind;
     }
     else
     {
@@ -3939,7 +3941,7 @@ void            Compiler::fgSetRngChkTarget(GenTreePtr  tree,
             unsigned stkDepth = (bndsChk != nullptr) ? bndsChk->gtStkDepth
                                                   : callStkDepth;
 
-            BasicBlock * rngErrBlk = fgRngChkTarget(compCurBB, stkDepth);
+            BasicBlock * rngErrBlk = fgRngChkTarget(compCurBB, stkDepth, kind);
 
             /* Add the label to the indirection node */
 
@@ -4102,9 +4104,16 @@ GenTreePtr          Compiler::fgMorphArrayIndex(GenTreePtr tree)
             arrLen = gtNewCastNode(bndsChkType, arrLen, bndsChkType);
         }
 
-        GenTreeBoundsChk* arrBndsChk    = new (this, GT_ARR_BOUNDS_CHECK) GenTreeBoundsChk(GT_ARR_BOUNDS_CHECK, TYP_VOID, arrLen, index);
+        GenTreeBoundsChk* arrBndsChk    = new (this, GT_ARR_BOUNDS_CHECK) GenTreeBoundsChk(GT_ARR_BOUNDS_CHECK, TYP_VOID, arrLen, index, SCK_RNGCHK_FAIL);
 
         bndsChk = arrBndsChk;
+
+        // Make sure to increment ref-counts if already ref-counted.
+        if (lvaLocalVarRefCounted)
+        {
+            lvaRecursiveIncRefCounts(index);
+            lvaRecursiveIncRefCounts(arrRef);
+        }
 
         // Now we'll switch to using the second copies for arrRef and index
         // to compute the address expression
@@ -5599,9 +5608,21 @@ GenTreePtr          Compiler::fgMorphCall(GenTreeCall* call)
         if (szFailReason == nullptr)
         {
             canFastTailCall = fgCanFastTailCall(call);
-            if (call->IsImplicitTailCall() && !canFastTailCall)
-            {    
-                szFailReason = "Opportunistic tail call cannot be dispatched as epilog+jmp";
+            if (!canFastTailCall)
+            {
+                if (call->IsImplicitTailCall())
+                {
+                    szFailReason = "Opportunistic tail call cannot be dispatched as epilog+jmp";
+                }
+#ifndef LEGACY_BACKEND
+                // Methods with non-standard args will have indirection cell or cookie param passed
+                // in callee trash register (e.g. R11). Tail call helper doesn't preserve it before
+                // tail calling the target method.
+                else if (call->HasNonStandardArgs())
+                {
+                    szFailReason = "Method with non-standard args passed in callee trash register cannot be tail called via helper";
+                }
+#endif //LEGACY_BACKEND
             }
         }
 
@@ -5983,6 +6004,37 @@ NO_TAIL_CALL:
 
     // Optimize get_ManagedThreadId(get_CurrentThread)
     noway_assert(call->gtOper == GT_CALL);
+
+    // Morph stelem.ref helper call to store a null value, into a store into an array without the helper.
+    // This needs to be done after the arguments are morphed to ensure constant propagation has already taken place.
+    if ((call->gtCallType == CT_HELPER) && (call->gtCallMethHnd == eeFindHelper(CORINFO_HELP_ARRADDR_ST)))
+    {       
+        GenTreePtr value = gtArgEntryByArgNum(call, 2)->node;
+
+        if (value->OperGet() == GT_CNS_INT && value->AsIntConCommon()->IconValue() == 0)
+        {
+            GenTreePtr arr = gtArgEntryByArgNum(call, 0)->node;
+            GenTreePtr index = gtArgEntryByArgNum(call, 1)->node;
+
+            arr = gtClone(arr, true);
+            if (arr != nullptr)
+            {
+                index = gtClone(index, true);
+                if (index != nullptr)
+                {
+                    value = gtClone(value);
+                    noway_assert(value != nullptr);
+
+                    GenTreePtr nullCheckedArr = impCheckForNullPointer(arr);
+                    GenTreePtr arrIndexNode = gtNewIndexRef(TYP_REF, nullCheckedArr, index);
+                    GenTreePtr arrStore = gtNewAssignNode(arrIndexNode, value);
+                    arrStore->gtFlags |= GTF_ASG;
+
+                    return fgMorphTree(arrStore);
+                }                
+            }
+        }
+    }
 
     if ((call->gtCallMoreFlags & GTF_CALL_M_SPECIAL_INTRINSIC) &&
            info.compCompHnd->getIntrinsicID(call->gtCallMethHnd) == CORINFO_INTRINSIC_GetManagedThreadId)
@@ -9446,13 +9498,13 @@ COMPARE:
         if (!varTypeIsFloating(tree->gtType))
         {
             // Codegen for this instruction needs to be able to throw two exceptions:
-            fgAddCodeRef(compCurBB, bbThrowIndex(compCurBB), ACK_OVERFLOW, fgPtrArgCntCur);
-            fgAddCodeRef(compCurBB, bbThrowIndex(compCurBB), ACK_DIV_BY_ZERO, fgPtrArgCntCur);
+            fgAddCodeRef(compCurBB, bbThrowIndex(compCurBB), SCK_OVERFLOW, fgPtrArgCntCur);
+            fgAddCodeRef(compCurBB, bbThrowIndex(compCurBB), SCK_DIV_BY_ZERO, fgPtrArgCntCur);
         }
         break;
     case GT_UDIV:
         // Codegen for this instruction needs to be able to throw one exception:
-        fgAddCodeRef(compCurBB, bbThrowIndex(compCurBB), ACK_DIV_BY_ZERO, fgPtrArgCntCur);
+        fgAddCodeRef(compCurBB, bbThrowIndex(compCurBB), SCK_DIV_BY_ZERO, fgPtrArgCntCur);
         break;
 #endif
 
@@ -9484,7 +9536,7 @@ CM_OVF_OP:
 
             // Add the excptn-throwing basic block to jump to on overflow
 
-            fgAddCodeRef(compCurBB, bbThrowIndex(compCurBB), ACK_OVERFLOW, fgPtrArgCntCur);
+            fgAddCodeRef(compCurBB, bbThrowIndex(compCurBB), SCK_OVERFLOW, fgPtrArgCntCur);
 
             // We can't do any commutative morphing for overflow instructions
 
@@ -9746,7 +9798,7 @@ CM_ADD_OP:
 
         noway_assert(varTypeIsFloating(op1->TypeGet()));
 
-        fgAddCodeRef(compCurBB, bbThrowIndex(compCurBB), ACK_ARITH_EXCPN, fgPtrArgCntCur);
+        fgAddCodeRef(compCurBB, bbThrowIndex(compCurBB), SCK_ARITH_EXCPN, fgPtrArgCntCur);
         break;
 
     case GT_IND:
@@ -14947,8 +14999,8 @@ bool Compiler::fgMorphCombineSIMDFieldAssignments(BasicBlock* block, GenTreePtr 
         GenTreePtr curLHS = exp->gtGetOp1();
         GenTreePtr curRHS = exp->gtGetOp2();
 
-        if (!areArgumentsLocatedContiguously(prevLHS, curLHS) ||
-            !areArgumentsLocatedContiguously(prevRHS, curRHS))
+        if (!areArgumentsContiguous(prevLHS, curLHS) ||
+            !areArgumentsContiguous(prevRHS, curRHS))
         {
             break;
         }

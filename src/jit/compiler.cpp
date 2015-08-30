@@ -2985,14 +2985,14 @@ bool  Compiler::compRsvdRegCheck(FrameLayoutState curState)
 // code:CILJit::compileMethod function.  
 // 
 // For an overview of the structure of the JIT, see:
-//   https://github.com/dotnet/coreclr/blob/master/Documentation/ryujit-overview.md
+//   https://github.com/dotnet/coreclr/blob/master/Documentation/botr/ryujit-overview.md
 //  
 void                 Compiler::compCompile(void * * methodCodePtr,
                                            ULONG  * methodCodeSize,
                                            unsigned compileFlags)
 {
     hashBv::Init(this);
-    
+
     VarSetOps::AssignAllowUninitRhs(this, compCurLife, VarSetOps::UninitVal());
 
     /* The temp holding the secret stub argument is used by fgImport() when importing the intrinsic. */
@@ -3007,22 +3007,18 @@ void                 Compiler::compCompile(void * * methodCodePtr,
     EndPhase(PHASE_PRE_IMPORT);
 
 #ifdef DEBUG
-#ifdef _TARGET_ARM_
-    bool extraSpew = (CLRConfig::GetConfigValue(CLRConfig::EXTERNAL_SOCExtraSpew) != 0);
-#endif
+    bool funcTrace = (CLRConfig::GetConfigValue(CLRConfig::INTERNAL_JitFunctionTrace) != 0);
 
     if (!compIsForInlining())
     {
         LONG newJitNestingLevel = InterlockedIncrement(&Compiler::jitNestingLevel);
         assert(newJitNestingLevel > 0);
-#ifdef _TARGET_ARM_
-        if (extraSpew && !opts.disDiffable)
+        if (funcTrace && !opts.disDiffable)
         {
             for (LONG i = 0; i < newJitNestingLevel - 1; i++)
                 printf("  ");
             printf("{ Start Jitting %s\n", info.compFullName); /* } editor brace matching workaround for this printf */
         }
-#endif // _TARGET_ARM
     }
 #endif // DEBUG
 
@@ -3464,8 +3460,7 @@ void                 Compiler::compCompile(void * * methodCodePtr,
     LONG newJitNestingLevel = InterlockedDecrement(&Compiler::jitNestingLevel);
     assert(newJitNestingLevel >= 0);
 
-#ifdef _TARGET_ARM_
-    if (extraSpew && !opts.disDiffable)
+    if (funcTrace && !opts.disDiffable)
     {
         for (LONG i = 0; i < newJitNestingLevel; i++)
             printf("  ");
@@ -3474,7 +3469,6 @@ void                 Compiler::compCompile(void * * methodCodePtr,
                Compiler::jitTotalMethodCompiled, DBG_ADDR(*methodCodePtr),
                info.compFullName, *methodCodeSize);
     }
-#endif // _TARGET_ARM_
 
 #if FUNC_INFO_LOGGING
     if (compJitFuncInfoFile != NULL)
@@ -5942,13 +5936,13 @@ void Compiler::AggregateMemStats::Print(FILE* f)
     fprintf(f, "For %9u methods:\n", nMethods);
     fprintf(f, "  count:       %12u (avg %7u per method)\n",
             allocCnt, allocCnt / nMethods);
-    fprintf(f, "  alloc size : %12llu (avg %7u per method)\n",
+    fprintf(f, "  alloc size : %12llu (avg %7llu per method)\n",
             allocSz, allocSz / nMethods);
     fprintf(f, "  max alloc  : %12llu\n", allocSzMax);
     fprintf(f, "\n");
-    fprintf(f, "  nraAlloc   : %12llu (avg %7u per method)\n",
+    fprintf(f, "  nraAlloc   : %12llu (avg %7llu per method)\n",
             nraTotalSizeAlloc, nraTotalSizeAlloc / nMethods);
-    fprintf(f, "  nraUsed    : %12llu (avg %7u per method)\n",
+    fprintf(f, "  nraUsed    : %12llu (avg %7llu per method)\n",
             nraTotalSizeUsed, nraTotalSizeUsed / nMethods);
     PrintByKind(f);
 }

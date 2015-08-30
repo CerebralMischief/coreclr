@@ -1380,7 +1380,8 @@ AGAIN:
     case GT_SIMD_CHK:
 #endif // FEATURE_SIMD
         return Compare(op1->gtBoundsChk.gtArrLen, op2->gtBoundsChk.gtArrLen)
-            && Compare(op1->gtBoundsChk.gtIndex, op2->gtBoundsChk.gtIndex);
+            && Compare(op1->gtBoundsChk.gtIndex, op2->gtBoundsChk.gtIndex)
+            && (op1->gtBoundsChk.gtThrowKind == op1->gtBoundsChk.gtThrowKind);
 
     default:
         assert(!"unexpected operator");
@@ -1896,6 +1897,7 @@ AGAIN:
 #endif // FEATURE_SIMD
         hash = genTreeHashAdd(hash, gtHashValue(tree->gtBoundsChk.gtArrLen));
         hash = genTreeHashAdd(hash, gtHashValue(tree->gtBoundsChk.gtIndex));
+        hash = genTreeHashAdd(hash, tree->gtBoundsChk.gtThrowKind);
         break;
 
     default:
@@ -6134,7 +6136,8 @@ GenTreePtr          Compiler::gtCloneExpr(GenTree * tree,
             GenTreeBoundsChk(oper,
                              tree->TypeGet(),
                              gtCloneExpr(tree->gtBoundsChk.gtArrLen, addFlags, varNum, varVal),
-                             gtCloneExpr(tree->gtBoundsChk.gtIndex, addFlags, varNum, varVal));
+                             gtCloneExpr(tree->gtBoundsChk.gtIndex, addFlags, varNum, varVal),
+                             tree->gtBoundsChk.gtThrowKind);
         break;
 
 
@@ -6845,6 +6848,16 @@ Compiler::gtDispNodeName(GenTree *tree)
         if (lea->Base() != NULL) bufp += SimpleSprintf_s(bufp, buf, sizeof(buf), "b+");
         if (lea->Index() != NULL) bufp += SimpleSprintf_s(bufp, buf, sizeof(buf), "(i*%d)+", lea->gtScale);
         bufp += SimpleSprintf_s(bufp, buf, sizeof(buf), "%d)", lea->gtOffset);
+    }
+    else if (tree->gtOper == GT_ARR_BOUNDS_CHECK)
+    {
+        switch(tree->gtBoundsChk.gtThrowKind)
+        {
+        case SCK_RNGCHK_FAIL:   sprintf_s(bufp, sizeof(buf), " %s_Rng", name);    break;
+        case SCK_ARG_EXCPN:     sprintf_s(bufp, sizeof(buf), " %s_Arg", name);    break;
+        case SCK_ARG_RNG_EXCPN: sprintf_s(bufp, sizeof(buf), " %s_ArgRng", name); break;
+        default:                unreached();
+        }
     }
     else if (tree->gtOverflowEx())
     {
@@ -8583,13 +8596,13 @@ GenTreePtr          Compiler::gtDispLinearTree(GenTreeStmt* curStmt,
                 // special case for child of initblk and cpblk
                 // op1 is dst, op2 is src, and op2 must show up first
                 assert(tree->OperIsBlkOp());
-                sprintf_s(bufp, sizeof(buf), "Source", listElemNum, 0);
+                sprintf_s(bufp, sizeof(buf), "Source");
                 indentStack->Push(indentInfo);
                 nextLinearNode = gtDispLinearTree(curStmt, nextLinearNode, child->gtOp.gtOp2, indentStack, bufp);
                 indentStack->Pop();
 
                 indentInfo = IIArc;
-                sprintf_s(bufp, sizeof(buf), "Destination", listElemNum, 0);
+                sprintf_s(bufp, sizeof(buf), "Destination");
                 indentStack->Push(indentInfo);
                 nextLinearNode = gtDispLinearTree(curStmt, nextLinearNode, child->gtOp.gtOp1, indentStack, bufp);
                 indentStack->Pop();
@@ -8628,7 +8641,7 @@ GenTreePtr          Compiler::gtDispLinearTree(GenTreeStmt* curStmt,
                     }
                     else
                     {
-                        sprintf_s(bufp, sizeof(buf), "List Item %d", listElemNum, 0);
+                        sprintf_s(bufp, sizeof(buf), "List Item %d", listElemNum);
                     }
                     indentStack->Push(indentInfo);
                     nextLinearNode = gtDispLinearTree(curStmt, nextLinearNode, listElem, indentStack, bufp);

@@ -10,10 +10,15 @@
 #include <dbgtargetcontext.h>
 #include <string>
 
+ULONG g_currentThreadIndex = -1;
+ULONG g_currentThreadSystemId = -1;
+char *g_coreclrDirectory;
+
 DebugClient::DebugClient(lldb::SBDebugger &debugger, lldb::SBCommandReturnObject &returnObject) :
     m_debugger(debugger),
     m_returnObject(returnObject)
 {
+    returnObject.SetStatus(lldb::eReturnStatusSuccessFinishResult);
 }
 
 DebugClient::~DebugClient()
@@ -152,21 +157,120 @@ DebugClient::GetExecutingProcessorType(
     return S_OK;
 }
 
+HRESULT 
+DebugClient::Execute(
+    ULONG outputControl,
+    PCSTR command,
+    ULONG flags)
+{
+    lldb::SBCommandInterpreter interpreter = m_debugger.GetCommandInterpreter();
+
+    lldb::SBCommandReturnObject result;
+    lldb::ReturnStatus status = interpreter.HandleCommand(command, result);
+
+    return status <= lldb::eReturnStatusSuccessContinuingResult ? S_OK : E_FAIL;
+}
+
+// PAL raise exception function and exception record pointer variable name
+// See coreclr\src\pal\src\exception\seh-unwind.cpp for the details.
+#define FUNCTION_NAME "RtlpRaiseException"
+#define VARIABLE_NAME "ExceptionRecord"
+
+HRESULT 
+DebugClient::GetLastEventInformation(
+    PULONG type,
+    PULONG processId,
+    PULONG threadId,
+    PVOID extraInformation,
+    ULONG extraInformationSize,
+    PULONG extraInformationUsed,
+    PSTR description,
+    ULONG descriptionSize,
+    PULONG descriptionUsed)
+{
+    if (extraInformationSize < sizeof(DEBUG_LAST_EVENT_INFO_EXCEPTION) || 
+        type == NULL || processId == NULL || threadId == NULL || extraInformationUsed == NULL) 
+    {
+        return E_FAIL;
+    }
+
+    *type = DEBUG_EVENT_EXCEPTION;
+    *processId = 0;
+    *threadId = 0;
+    *extraInformationUsed = sizeof(DEBUG_LAST_EVENT_INFO_EXCEPTION);
+
+    DEBUG_LAST_EVENT_INFO_EXCEPTION *pdle = (DEBUG_LAST_EVENT_INFO_EXCEPTION *)extraInformation;
+    pdle->FirstChance = 1; 
+
+    lldb::SBProcess process = GetCurrentProcess();
+    if (!process.IsValid())
+    {
+        return E_FAIL;
+    }
+    lldb::SBThread thread = process.GetSelectedThread();
+    if (!thread.IsValid())
+    {
+        return E_FAIL;
+    }
+
+    // Enumerate each stack frame at the special "throw"
+    // breakpoint and find the raise exception function 
+    // with the exception record parameter.
+    int numFrames = thread.GetNumFrames();
+    for (int i = 0; i < numFrames; i++)
+    {
+        lldb::SBFrame frame = thread.GetFrameAtIndex(i);
+        if (!frame.IsValid())
+        {
+            break;
+        }
+
+        const char *functionName = frame.GetFunctionName();
+        if (functionName == NULL || strncmp(functionName, FUNCTION_NAME, sizeof(FUNCTION_NAME) - 1) != 0)
+        {
+            continue;
+        }
+
+        lldb::SBValue exValue = frame.FindVariable(VARIABLE_NAME);
+        if (!exValue.IsValid())
+        {
+            break;
+        }
+
+        lldb::SBError error;
+        ULONG64 pExceptionRecord = exValue.GetValueAsUnsigned(error);
+        if (error.Fail())
+        {
+            break;
+        }
+
+        process.ReadMemory(pExceptionRecord, &pdle->ExceptionRecord, sizeof(pdle->ExceptionRecord), error);
+        if (error.Fail())
+        {
+            break;
+        }
+
+        return S_OK;
+    }
+
+    return E_FAIL;
+}
+
 // Internal output string function
 void
 DebugClient::OutputString(
     ULONG mask,
     PCSTR str)
 {
-    if (mask & DEBUG_OUTPUT_ERROR)
+    if (mask == DEBUG_OUTPUT_ERROR)
     {
-        m_returnObject.SetError(str);
+        m_returnObject.SetStatus(lldb::eReturnStatusFailed);
     }
-    else 
-    {
-        // Can not use AppendMessage or AppendWarning because they add a newline.
-        m_returnObject.Printf("%s", str);
-    }
+    // Can not use AppendMessage or AppendWarning because they add a newline. SetError
+    // can not be used for DEBUG_OUTPUT_ERROR mask because it caches the error strings
+    // seperately from the normal output so error/normal texts are not intermixed 
+    // correctly.
+    m_returnObject.Printf("%s", str);
 }
 
 //----------------------------------------------------------------------------
@@ -206,11 +310,23 @@ DebugClient::WriteVirtual(
     ULONG bufferSize,
     PULONG bytesWritten)
 {
+    lldb::SBError error;
+    size_t written = 0;
+
+    lldb::SBProcess process = GetCurrentProcess();
+    if (!process.IsValid())
+    {
+        goto exit;
+    }
+
+    written = process.WriteMemory(offset, buffer, bufferSize, error);
+
+exit:
     if (bytesWritten)
     {
-        *bytesWritten = 0;
+        *bytesWritten = written;
     }
-    return E_NOTIMPL;
+    return error.Success() ? S_OK : E_FAIL;
 }
 
 //----------------------------------------------------------------------------
@@ -628,6 +744,14 @@ DebugClient::GetCurrentThreadId(
         return E_FAIL;
     }
 
+    // This is allow the a valid current TID to be returned to 
+    // workaround a bug in lldb on core dumps.
+    if (g_currentThreadIndex != -1)
+    {
+        *id = g_currentThreadIndex;
+        return S_OK;
+    }
+
     *id = thread.GetIndexID();
     return S_OK;
 }
@@ -661,6 +785,14 @@ DebugClient::GetCurrentThreadSystemId(
         return E_FAIL;
     }
 
+    // This is allow the a valid current TID to be returned to 
+    // workaround a bug in lldb on core dumps.
+    if (g_currentThreadSystemId != -1)
+    {
+        *sysId = g_currentThreadSystemId;
+        return S_OK;
+    }
+
     *sysId = thread.GetThreadID();
     return S_OK;
 }
@@ -682,13 +814,22 @@ DebugClient::GetThreadIdBySystemId(
         goto exit;
     }
 
-    thread = process.GetThreadByID(sysId);
-    if (!thread.IsValid())
+    // If we have a "fake" thread OS (system) id and a fake thread index,
+    // we need to return fake thread index.
+    if (g_currentThreadSystemId == sysId && g_currentThreadIndex != -1)
     {
-        goto exit;
+        id = g_currentThreadIndex;
     }
+    else
+    {
+        thread = process.GetThreadByID(sysId);
+        if (!thread.IsValid())
+        {
+            goto exit;
+        }
 
-    id = thread.GetIndexID();
+        id = thread.GetIndexID();
+    }
     hr = S_OK;
 
 exit:
@@ -721,7 +862,17 @@ DebugClient::GetThreadContextById(
         goto exit;
     }
 
-    thread = process.GetThreadByID(threadID);
+    // If we have a "fake" thread OS (system) id and a fake thread index,
+    // use the fake thread index to get the context.
+    if (g_currentThreadSystemId == threadID && g_currentThreadIndex != -1)
+    {
+        thread = process.GetThreadByIndexID(g_currentThreadIndex);
+    }
+    else
+    {
+        thread = process.GetThreadByID(threadID);
+    }
+    
     if (!thread.IsValid())
     {
         goto exit;
@@ -736,6 +887,7 @@ DebugClient::GetThreadContextById(
     dtcontext = (DT_CONTEXT*)context;
     dtcontext->ContextFlags = contextFlags;
 
+#ifdef DBG_TARGET_AMD64
     dtcontext->Rip = frame.GetPC();
     dtcontext->Rsp = frame.GetSP();
     dtcontext->Rbp = frame.GetFP();
@@ -762,6 +914,26 @@ DebugClient::GetThreadContextById(
     dtcontext->SegEs = GetRegister(frame, "es");
     dtcontext->SegFs = GetRegister(frame, "fs");
     dtcontext->SegGs = GetRegister(frame, "gs");
+#elif DBG_TARGET_ARM
+    dtcontext->Pc = frame.GetPC();
+    dtcontext->Sp = frame.GetSP();
+    dtcontext->Lr = GetRegister(frame, "lr");
+    dtcontext->Cpsr = GetRegister(frame, "cpsr");
+
+    dtcontext->R0 = GetRegister(frame, "r0");
+    dtcontext->R1 = GetRegister(frame, "r1");
+    dtcontext->R2 = GetRegister(frame, "r2");
+    dtcontext->R3 = GetRegister(frame, "r3");
+    dtcontext->R4 = GetRegister(frame, "r4");
+    dtcontext->R5 = GetRegister(frame, "r5");
+    dtcontext->R6 = GetRegister(frame, "r6");
+    dtcontext->R7 = GetRegister(frame, "r7");
+    dtcontext->R8 = GetRegister(frame, "r8");
+    dtcontext->R9 = GetRegister(frame, "r9");
+    dtcontext->R10 = GetRegister(frame, "r10");
+    dtcontext->R11 = GetRegister(frame, "r11");
+    dtcontext->R12 = GetRegister(frame, "r12");
+#endif
 
     hr = S_OK;
 
@@ -863,6 +1035,12 @@ DebugClient::GetFrameOffset(
 //----------------------------------------------------------------------------
 // IDebugClient
 //----------------------------------------------------------------------------
+
+PCSTR
+DebugClient::GetCoreClrDirectory()
+{
+    return g_coreclrDirectory;
+}
 
 DWORD_PTR
 DebugClient::GetExpression(

@@ -764,11 +764,17 @@ inline
 
 inline
 float               getR4LittleEndian(const BYTE * ptr)
-{ return *(UNALIGNED float*)ptr; }
+{
+    __int32 val = getI4LittleEndian(ptr);
+    return *(float *)&val;
+}
 
 inline
 double              getR8LittleEndian(const BYTE * ptr)
-{ return *(UNALIGNED double*)ptr; }
+{
+    __int64 val = getI8LittleEndian(ptr);
+    return *(double *)&val;
+}
 
 
 /*****************************************************************************
@@ -2826,9 +2832,9 @@ bool                Compiler::fgIsThrowHlpBlk(BasicBlock * block)
     {
         if  (block == add->acdDstBlk)
         {
-            return add->acdKind == ACK_RNGCHK_FAIL ||
-                   add->acdKind == ACK_DIV_BY_ZERO ||
-                   add->acdKind == ACK_OVERFLOW;
+            return add->acdKind == SCK_RNGCHK_FAIL ||
+                   add->acdKind == SCK_DIV_BY_ZERO ||
+                   add->acdKind == SCK_OVERFLOW;
         }
     }
 
@@ -2849,9 +2855,9 @@ unsigned            Compiler::fgThrowHlpBlkStkLevel(BasicBlock *block)
     {
         if  (block == add->acdDstBlk)
         {
-            assert(add->acdKind == ACK_RNGCHK_FAIL ||
-                   add->acdKind == ACK_DIV_BY_ZERO ||
-                   add->acdKind == ACK_OVERFLOW);
+            assert(add->acdKind == SCK_RNGCHK_FAIL ||
+                   add->acdKind == SCK_DIV_BY_ZERO ||
+                   add->acdKind == SCK_OVERFLOW);
             // TODO: bbTgtStkDepth is DEBUG-only.
             // Should we use it regularly and avoid this search.
             assert(block->bbTgtStkDepth == add->acdStkLvl);

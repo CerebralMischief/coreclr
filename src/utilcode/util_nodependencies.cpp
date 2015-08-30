@@ -211,6 +211,9 @@ CHECK_SUPPORTED:
 // Returns TRUE if we are running on a 64-bit OS in WoW, FALSE otherwise.
 BOOL RunningInWow64()
 {
+    #ifdef PLATFORM_UNIX
+    return FALSE;
+    #else
     static int s_Wow64Process;
 
     if (s_Wow64Process == 0)
@@ -224,6 +227,7 @@ BOOL RunningInWow64()
     }
 
     return (s_Wow64Process == 1) ? TRUE : FALSE;
+    #endif
 }
 #endif
 
@@ -317,7 +321,7 @@ HRESULT GetCurrentModuleFileName(__out_ecount(*pcchBuffer) LPWSTR pBuffer, __ino
     }
 
     // Get the appname to look up in the exclusion or inclusion list.
-    WCHAR appPath[MAX_PATH + 2];
+    WCHAR appPath[MAX_LONGPATH + 2];
 
     DWORD ret = WszGetModuleFileName(NULL, appPath, NumItems(appPath));
 

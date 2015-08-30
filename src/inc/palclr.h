@@ -86,7 +86,7 @@
 #define PORTABILITY_ASSERT(message)     _ASSERTE(false && message)
 #endif
 
-
+#define DIRECTORY_SEPARATOR_CHAR_A '\\'
 #define DIRECTORY_SEPARATOR_CHAR_W W('\\')
 #define DIRECTORY_SEPARATOR_STR_W W("\\")
 
@@ -598,7 +598,14 @@
 #define MAKEDLLNAME(x) MAKEDLLNAME_A(x)
 #endif
 
-#endif	// __PALCLR_H__
+#if !defined(MAX_LONGPATH)
+#define MAX_LONGPATH   260 /* max. length of full pathname */
+#endif
+#if !defined(MAX_PATH_FNAME)
+#define MAX_PATH_FNAME   MAX_PATH /* max. length of full pathname */
+#endif
+
+#endif // __PALCLR_H__
 
 #include "palclr_win.h"
 

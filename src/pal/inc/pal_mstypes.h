@@ -57,10 +57,12 @@ extern "C" {
 #define CDECL          __cdecl
 #endif
 
+#ifndef PAL_STDCPP_COMPAT
 #undef __fastcall
 #define __fastcall      __stdcall
 #undef _fastcall
 #define _fastcall       __fastcall
+#endif // PAL_STDCPP_COMPAT
 
 #else   // !defined(__i386__)
 
@@ -69,8 +71,12 @@ extern "C" {
 #define __cdecl
 #define _cdecl
 #define CDECL
+
+// On ARM __fastcall is ignored and causes a compile error
+#if !defined(PAL_STDCPP_COMPAT) || defined(__arm__)
 #define __fastcall
 #define _fastcall
+#endif // !defined(PAL_STDCPP_COMPAT) || defined(__arm__)
 
 #endif  // !defined(__i386__)
 
@@ -194,9 +200,9 @@ extern "C" {
 
 #ifdef BIT64
 #define __int64     long
-#else // _WIN64
+#else // BIT64
 #define __int64     long long
-#endif // _WIN64
+#endif // BIT64
 
 #define __int32     int
 #define __int16     short int
@@ -204,6 +210,7 @@ extern "C" {
 
 #endif // _MSC_VER
 
+#ifndef PAL_STDCPP_COMPAT
 // Defined in gnu's types.h. For non PAL_IMPLEMENTATION system
 // includes are not included, so we need to define them.
 #ifndef PAL_IMPLEMENTATION
@@ -224,6 +231,7 @@ typedef long double LONG_DOUBLE;
 #endif
 
 #endif // _MSC_VER
+#endif // !PAL_STDCPP_COMPAT
 
 typedef void VOID;
 
@@ -307,7 +315,7 @@ typedef signed __int64 LONG64;
 #define _W64
 #endif
 
-#if _WIN64
+#ifdef BIT64
 
 // UNIXTODO: Implement proper _atoi64, the atol returns 32 bit result
 #define _atoi64 (__int64)atol
@@ -560,13 +568,20 @@ typedef LONG_PTR SSIZE_T, *PSSIZE_T;
 #define SSIZE_T_MIN I64(-9223372036854775808)
 #endif
 
-#if defined(__APPLE_CC__) || defined(__LINUX__) 
+#ifndef PAL_STDCPP_COMPAT
+#if defined(__APPLE_CC__) || defined(__LINUX__)
+#ifdef BIT64
 typedef unsigned long size_t;
 typedef long ptrdiff_t;
+#else // !BIT64
+typedef unsigned int size_t;
+typedef int ptrdiff_t;
+#endif // !BIT64
 #else
 typedef ULONG_PTR size_t;
 typedef LONG_PTR ptrdiff_t;
 #endif
+#endif // !PAL_STDCPP_COMPAT
 #define _SIZE_T_DEFINED
 
 typedef LONG_PTR LPARAM;
@@ -578,18 +593,35 @@ typedef LONG_PTR LPARAM;
 #define _PTRDIFF_T
 #endif
 
+#ifdef PAL_STDCPP_COMPAT
+
+#ifdef BIT64
+typedef unsigned long int uintptr_t;
+#else // !BIT64
+typedef unsigned int uintptr_t;
+#endif // !BIT64
+
+typedef char16_t WCHAR;
+
+#else // PAL_STDCPP_COMPAT
+
+typedef wchar_t WCHAR;
 #if defined(__LINUX__) 
+#ifdef BIT64
 typedef long int intptr_t;
+typedef unsigned long int uintptr_t;
+#else // !BIT64
+typedef int intptr_t;
+typedef unsigned int uintptr_t;
+#endif // !BIT64
 #else
 typedef INT_PTR intptr_t;
-#endif
-#define _INTPTR_T_DEFINED
-
-#if defined(__LINUX__) 
-typedef unsigned long int uintptr_t;
-#else
 typedef UINT_PTR uintptr_t;
 #endif
+
+#endif // PAL_STDCPP_COMPAT
+
+#define _INTPTR_T_DEFINED
 #define _UINTPTR_T_DEFINED
 
 typedef DWORD LCID;
@@ -598,7 +630,6 @@ typedef WORD LANGID;
 
 typedef DWORD LCTYPE;
 
-typedef wchar_t WCHAR;
 typedef WCHAR *PWCHAR;
 typedef WCHAR *LPWCH, *PWCH;
 typedef CONST WCHAR *LPCWCH, *PCWCH;
@@ -663,6 +694,7 @@ typedef union _LARGE_INTEGER {
     LONGLONG QuadPart;
 } LARGE_INTEGER, *PLARGE_INTEGER;
 
+#ifndef GUID_DEFINED
 typedef struct _GUID {
     ULONG   Data1;    // NOTE: diff from Win32, for LP64
     USHORT  Data2;
@@ -670,6 +702,7 @@ typedef struct _GUID {
     UCHAR   Data4[ 8 ];
 } GUID;
 #define GUID_DEFINED
+#endif // !GUID_DEFINED
 
 typedef struct _FILETIME {
     DWORD dwLowDateTime;

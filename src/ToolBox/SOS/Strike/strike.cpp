@@ -85,8 +85,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#include <malloc.h>
 #include <stddef.h>
 
 #include "strike.h"
@@ -271,7 +269,9 @@ DECLARE_API(IP2MD)
     TADDR IP = 0;
     CMDOption option[] = 
     {   // name, vptr, type, hasValue
+#ifndef FEATURE_PAL
         {"/d", &dml, COBOOL, FALSE},
+#endif
     };
     CMDValue arg[] = 
     {   // vptr, type
@@ -616,7 +616,6 @@ HRESULT DumpStackObjectsRaw(size_t nArg, __in_z LPSTR exprBottom, __in_z LPSTR e
         return E_FAIL;
     }
 
-#ifndef FEATURE_PAL
     // We can use the gc snapshot to eliminate object addresses that are
     // not on the gc heap. 
     if (!g_snapshot.Build())
@@ -624,7 +623,6 @@ HRESULT DumpStackObjectsRaw(size_t nArg, __in_z LPSTR exprBottom, __in_z LPSTR e
         ExtOut("Unable to determine bounds of gc heap\n");
         return E_FAIL;
     }   
-#endif // !FEATURE_PAL
 
     // Print thread ID.
     ULONG id = 0;
@@ -655,7 +653,9 @@ DECLARE_API(DumpStackObjects)
     CMDOption option[] = 
     {   // name, vptr, type, hasValue
         {"-verify", &bVerify, COBOOL, FALSE},
+#ifndef FEATURE_PAL
         {"/d", &dml, COBOOL, FALSE}
+#endif
     };    
     CMDValue arg[] = 
     {   // vptr, type
@@ -691,7 +691,9 @@ DECLARE_API(DumpMD)
 
     CMDOption option[] = 
     {   // name, vptr, type, hasValue
+#ifndef FEATURE_PAL
         {"/d", &dml, COBOOL, FALSE},
+#endif
     };
     CMDValue arg[] = 
     {   // vptr, type
@@ -1129,7 +1131,9 @@ DECLARE_API(DumpClass)
 
     CMDOption option[] = 
     {   // name, vptr, type, hasValue
+#ifndef FEATURE_PAL
         {"/d", &dml, COBOOL, FALSE},
+#endif
     };
     CMDValue arg[] = 
     {   // vptr, type
@@ -1257,7 +1261,9 @@ DECLARE_API(DumpMT)
     CMDOption option[] = 
     {   // name, vptr, type, hasValue
         {"-MD", &bDumpMDTable, COBOOL, FALSE},
+#ifndef FEATURE_PAL
         {"/d", &dml, COBOOL, FALSE}
+#endif
     };
     CMDValue arg[] = 
     {   // vptr, type
@@ -1489,12 +1495,12 @@ HRESULT PrintObj(TADDR taObj, BOOL bPrintFields = TRUE)
     DWORD_PTR size = (DWORD_PTR)objData.Size;
     ExtOut("Size:        %" POINTERSIZE_TYPE "d(0x%" POINTERSIZE_TYPE "x) bytes\n", size, size);
 
-    if (wcscmp(obj.GetTypeName(), W("System.RuntimeType")) == 0)
+    if (_wcscmp(obj.GetTypeName(), W("System.RuntimeType")) == 0)
     {
         PrintRuntimeTypeInfo(taObj, objData);
     }
 
-    if (wcscmp(obj.GetTypeName(), W("System.RuntimeType+RuntimeTypeCache")) == 0)
+    if (_wcscmp(obj.GetTypeName(), W("System.RuntimeType+RuntimeTypeCache")) == 0)
     {
         // Get the method table
         int iOffset = GetObjFieldOffset (taObj, objData.MethodTable, W("m_runtimeType"));
@@ -1656,7 +1662,7 @@ HRESULT PrintPermissionSet (TADDR p_PermSet)
 
     
     sos::MethodTable mt = TO_TADDR(PermSetData.MethodTable);
-    if (wcscmp (W("System.Security.PermissionSet"), mt.GetName()) != 0 && wcscmp(W("System.Security.NamedPermissionSet"), mt.GetName()) != 0)
+    if (_wcscmp (W("System.Security.PermissionSet"), mt.GetName()) != 0 && _wcscmp(W("System.Security.NamedPermissionSet"), mt.GetName()) != 0)
     {
         ExtOut("Invalid PermissionSet object\n");
         return S_FALSE;
@@ -1757,7 +1763,9 @@ DECLARE_API(DumpArray)
         {"-length", &flags.Length, COSIZE_T, TRUE},
         {"-details", &flags.bDetail, COBOOL, FALSE},
         {"-nofields", &flags.bNoFieldsForElement, COBOOL, FALSE},
+#ifndef FEATURE_PAL
         {"/d", &dml, COBOOL, FALSE},
+#endif
     };
     CMDValue arg[] = 
     {   // vptr, type
@@ -1874,7 +1882,7 @@ HRESULT PrintArray(DacpObjectData& objData, DumpArrayFlags& flags, BOOL isPermSe
     //length is only supported for single-dimension array
     if (objData.dwRank == 1 && flags.Length != (DWORD_PTR)-1)
     {
-        bounds[0] = min(bounds[0], (DWORD)(flags.Length + flags.startIndex) - lowerBounds[0]);
+        bounds[0] = _min(bounds[0], (DWORD)(flags.Length + flags.startIndex) - lowerBounds[0]);
     }
     
     DWORD *indices = (DWORD *)alloca(dwRankAllocSize);
@@ -1973,7 +1981,9 @@ DECLARE_API(DumpObj)
     {   // name, vptr, type, hasValue
         {"-nofields", &bNoFields, COBOOL, FALSE},
         {"-refs", &bRefs, COBOOL, FALSE},
+#ifndef FEATURE_PAL
         {"/d", &dml, COBOOL, FALSE},
+#endif
     };
     CMDValue arg[] = 
     {   // vptr, type
@@ -2039,7 +2049,7 @@ CLRDATA_ADDRESS isSecurityExceptionObj(CLRDATA_ADDRESS mtObj)
             break;            
         }
         NameForMT_s(TO_TADDR(walkMT), g_mdName, mdNameLen);                
-        if (wcscmp(W("System.Security.SecurityException"), g_mdName) == 0)
+        if (_wcscmp(W("System.Security.SecurityException"), g_mdName) == 0)
         {
             return walkMT;
         }
@@ -2051,7 +2061,7 @@ CLRDATA_ADDRESS isSecurityExceptionObj(CLRDATA_ADDRESS mtObj)
 // Fill the passed in buffer with a text header for generated exception information.
 // Returns the number of characters in the wszBuffer array on exit.
 // If NULL is passed for wszBuffer, just returns the number of characters needed.
-size_t AddExceptionHeader (__out_ecount (bufferLength) __out_opt WCHAR *wszBuffer, size_t bufferLength)
+size_t AddExceptionHeader (__out_ecount_opt(bufferLength) WCHAR *wszBuffer, size_t bufferLength)
 {
 #ifdef _TARGET_WIN64_
     const WCHAR *wszHeader = W("    SP               IP               Function\n");
@@ -2062,7 +2072,7 @@ size_t AddExceptionHeader (__out_ecount (bufferLength) __out_opt WCHAR *wszBuffe
     {
         swprintf_s(wszBuffer, bufferLength, wszHeader);
     }
-    return wcslen(wszHeader);
+    return _wcslen(wszHeader);
 }
 
 struct StackTraceElement 
@@ -2092,8 +2102,8 @@ public:
 
     BOOL Append(__in_z LPCWSTR pszStr)
     {
-        size_t iInputLen = wcslen (pszStr);        
-        size_t iCurLen = wcslen (cs.String());
+        size_t iInputLen = _wcslen (pszStr);        
+        size_t iCurLen = _wcslen (cs.String());
         if ((iCurLen + iInputLen + 1) > cs.Size())
         {
             if (cs.ReSize(iCurLen + iInputLen + 1) != S_OK)
@@ -2108,7 +2118,7 @@ public:
     
     size_t Length()
     {
-        return wcslen(cs.String());
+        return _wcslen(cs.String());
     }
 
     WCHAR *String()
@@ -2205,7 +2215,7 @@ BOOL IsAsyncException(const DacpExceptionObjectData & excData)
 #define SOS_STACKTRACE_SHOWEXPLICITFRAMES  0x00000002
 size_t FormatGeneratedException (DWORD_PTR dataPtr, 
     UINT bytes, 
-    __out_ecount (bufferLength) __out_opt WCHAR *wszBuffer, 
+    __out_ecount_opt(bufferLength) WCHAR *wszBuffer, 
     size_t bufferLength, 
     BOOL bAsync,
     BOOL bNestedCase=FALSE,
@@ -2304,7 +2314,7 @@ size_t FormatGeneratedException (DWORD_PTR dataPtr,
                 swprintf_s(wszLineBuffer, _countof(wszLineBuffer), W("    %s [%S @ %d]\n"), so.String(), filename, linenum);
             }
 
-            Length += wcslen(wszLineBuffer);
+            Length += _wcslen(wszLineBuffer);
 
             if (wszBuffer)
             {
@@ -2589,7 +2599,9 @@ DECLARE_API(PrintException)
         {"-lines", &bLineNumbers, COBOOL, FALSE},
         {"-l", &bLineNumbers, COBOOL, FALSE},
         {"-ccw", &bCCW, COBOOL, FALSE},
+#ifndef FEATURE_PAL
         {"/d", &dml, COBOOL, FALSE}
+#endif
     };
     CMDValue arg[] = 
     {   // vptr, type
@@ -2733,8 +2745,6 @@ DECLARE_API(PrintException)
     return Status;
 }
 
-#ifndef FEATURE_PAL
-
 /**********************************************************************\
 * Routine Description:                                                 *
 *                                                                      *
@@ -2753,7 +2763,9 @@ DECLARE_API(DumpVC)
 
     CMDOption option[] = 
     {   // name, vptr, type, hasValue
+#ifndef FEATURE_PAL
         {"/d", &dml, COBOOL, FALSE}
+#endif
     };
     CMDValue arg[] = 
     {   // vptr, type
@@ -2781,6 +2793,8 @@ DECLARE_API(DumpVC)
 
     return PrintVC(p_MT, p_Object);
 }
+
+#ifndef FEATURE_PAL
 
 #ifdef FEATURE_COMINTEROP
 
@@ -3158,6 +3172,8 @@ DECLARE_API(DumpPermissionSet)
 void GCPrintGenerationInfo(DacpGcHeapDetails &heap);
 void GCPrintSegmentInfo(DacpGcHeapDetails &heap, DWORD_PTR &total_size);
 
+#endif // FEATURE_PAL
+
 void DisplayInvalidStructuresMessage()
 {
     ExtOut("The garbage collector data structures are not in a valid state for traversal.\n");
@@ -3379,6 +3395,8 @@ void PrintGCStat(HeapStat *inStat, const char* label=NULL)
     }
 }
 
+#ifndef FEATURE_PAL
+
 DECLARE_API(TraverseHeap)
 {
     INIT_API();
@@ -3456,6 +3474,8 @@ DECLARE_API(TraverseHeap)
     return Status;
 }
 
+#endif // FEATURE_PAL
+
 struct PrintRuntimeTypeArgs
 {
     DWORD_PTR mtOfRuntimeType;
@@ -3471,7 +3491,7 @@ void PrintRuntimeTypes(DWORD_PTR objAddr,size_t Size,DWORD_PTR methodTable,LPVOI
     {
         NameForMT_s(methodTable, g_mdName, mdNameLen);
 
-        if (wcscmp(g_mdName, W("System.RuntimeType")) == 0)
+        if (_wcscmp(g_mdName, W("System.RuntimeType")) == 0)
         {
             pArgs->mtOfRuntimeType = methodTable;
             pArgs->handleFieldOffset = GetObjFieldOffset(objAddr, methodTable, W("m_handle"));
@@ -3604,7 +3624,9 @@ public:
             {"-max", &mMaxSize, COHEX, TRUE},        // max size of objects to display
             {"-live", &mLive, COHEX, FALSE},         // only print live objects
             {"-dead", &mDead, COHEX, FALSE},         // only print dead objects
+#ifndef FEATURE_PAL
             {"/d", &mDML, COBOOL, FALSE},            // Debugger Markup Language
+#endif
         };
 
         CMDValue arg[] = 
@@ -3711,7 +3733,7 @@ public:
                 {
                     // Does the object header point to this syncblock index?
                     sos::Object obj = itr->GetObject();
-                    unsigned long header = 0;
+                    ULONG header = 0;
 
                     if (!obj.TryGetHeader(header))
                     {
@@ -3724,8 +3746,8 @@ public:
                         bool valid = false;
                         if ((header & BIT_SBLK_IS_HASH_OR_SYNCBLKINDEX) != 0 && (header & BIT_SBLK_IS_HASHCODE) == 0)
                         {
-                            unsigned long index = header & MASK_SYNCBLOCKINDEX;
-                            valid = (unsigned long)itr->GetIndex() == index;
+                            ULONG index = header & MASK_SYNCBLOCKINDEX;
+                            valid = (ULONG)itr->GetIndex() == index;
                         }
                         
                         if (!valid)
@@ -3767,7 +3789,7 @@ private:
         if (mType != NULL)
         {
             WString name = obj.GetTypeName();
-            return wcsstr(name.c_str(), mType) != NULL;
+            return _wcsstr(name.c_str(), mType) != NULL;
         }
 
         return true;
@@ -3855,7 +3877,7 @@ private:
             str[0] = 0;
         }
         
-        StringSetEntry(__in_ecount(64) wchar_t tmp[64], size_t _size)
+        StringSetEntry(__in_ecount(64) WCHAR tmp[64], size_t _size)
             : count(1), size(_size)
         {
             memcpy(str, tmp, sizeof(str));
@@ -3869,11 +3891,11 @@ private:
         
         mutable size_t count;
         mutable size_t size;
-        wchar_t str[64];
+        WCHAR str[64];
         
         bool operator<(const StringSetEntry &rhs) const
         {
-            return wcscmp(str, rhs.str) == -1;
+            return _wcscmp(str, rhs.str) == -1;
         }
     };
 
@@ -3911,12 +3933,12 @@ private:
 
                 // Don't bother calculating the size of the string, just read the full 64 characters of the buffer.  The null
                 // terminator we read will terminate the string.
-                HRESULT hr = g_ExtData->ReadVirtual(TO_CDADDR(addr+offset), tmp.str, sizeof(wchar_t)*(_countof(tmp.str)-1), &fetched);
+                HRESULT hr = g_ExtData->ReadVirtual(TO_CDADDR(addr+offset), tmp.str, sizeof(WCHAR)*(_countof(tmp.str)-1), &fetched);
                 if (SUCCEEDED(hr))
                 {
                     // Ensure we null terminate the string.  Note that this will not overrun the buffer as we only
                     // wrote a max of 63 characters into the 64 character buffer.
-                    tmp.str[fetched/sizeof(wchar_t)] = 0;
+                    tmp.str[fetched/sizeof(WCHAR)] = 0;
                     Set::iterator sitr = set.find(tmp);
                     if (sitr == set.end())
                     {
@@ -3946,7 +3968,7 @@ private:
             if (IsInterrupt())
                 break;
                 
-            Flatten(vitr->str, (unsigned int)wcslen(vitr->str));
+            Flatten(vitr->str, (unsigned int)_wcslen(vitr->str));
             out.WriteRow(Decimal(vitr->size), Decimal(vitr->count), vitr->str);
         }
 #endif // FEATURE_PAL
@@ -4005,7 +4027,7 @@ private:
          mDead;
 
 
-    wchar_t *mType;
+    WCHAR *mType;
 
 private:
 #if !defined(FEATURE_PAL)
@@ -4049,7 +4071,6 @@ private:
     void PrintFragmentationReport() {}
 #endif
 };
-
 
 /**********************************************************************\
 * Routine Description:                                                 *
@@ -4130,6 +4151,8 @@ DECLARE_API(VerifyHeap)
         return E_FAIL;
     }
 }
+
+#ifndef FEATURE_PAL
 
 enum failure_get_memory
 {
@@ -4299,8 +4322,6 @@ DECLARE_API(VerifyObj)
     INIT_API();    
     MINIDUMP_NOT_SUPPORTED();
 
-#ifndef FEATURE_PAL
-
     TADDR  taddrObj = 0;
     TADDR  taddrMT;
     size_t objSize;
@@ -4348,13 +4369,6 @@ Exit:
     }
 
     return Status;
-
-#else
-
-    _ASSERTE(false);
-    return E_FAIL;
-
-#endif // FEATURE_PAL
 }
 
 void LNODisplayOutput(LPCWSTR tag, TADDR pMT, TADDR currentObj, size_t size) 
@@ -4444,7 +4458,7 @@ DECLARE_API(ListNearObj)
     candidate.reserve(10);
 
     // since we'll be reading back I'll prime the read cache to a buffer before the current address
-    MOVE(taddrCur, max(trngSeg.start, taddrObj-DT_OS_PAGE_SIZE));
+    MOVE(taddrCur, _max(trngSeg.start, taddrObj-DT_OS_PAGE_SIZE));
 
     // ===== Look for a good candidate preceeding taddrObj
 
@@ -5201,7 +5215,9 @@ DECLARE_API(DumpModule)
     CMDOption option[] = 
     {   // name, vptr, type, hasValue
         {"-mt", &bMethodTables, COBOOL, FALSE},
+#ifndef FEATURE_PAL
         {"/d", &dml, COBOOL, FALSE}
+#endif
     };
     CMDValue arg[] = 
     {   // vptr, type
@@ -5289,7 +5305,9 @@ DECLARE_API(DumpDomain)
 
     CMDOption option[] = 
     {   // name, vptr, type, hasValue
+#ifndef FEATURE_PAL
         {"/d", &dml, COBOOL, FALSE},
+#endif
     };
     CMDValue arg[] = 
     {   // vptr, type
@@ -5407,7 +5425,9 @@ DECLARE_API(DumpAssembly)
 
     CMDOption option[] = 
     {   // name, vptr, type, hasValue
+#ifndef FEATURE_PAL
         {"/d", &dml, COBOOL, FALSE},
+#endif
     };
     CMDValue arg[] = 
     {   // vptr, type
@@ -5514,7 +5534,7 @@ HRESULT PrintThreadsFromThreadStore(BOOL bMiniDump, BOOL bPrintLiveThreadsOnly)
 
     const bool hosted = (ThreadStore.fHostConfig & CLRTASKHOSTED) != 0;
     table.ReInit(hosted ? 12 : 11, POINTERSIZE_HEX);
-    table.SetWidths(10, 4, 4, 4, max(9, POINTERSIZE_HEX), 
+    table.SetWidths(10, 4, 4, 4, _max(9, POINTERSIZE_HEX), 
                       8, 11, 1+POINTERSIZE_HEX*2, POINTERSIZE_HEX,
                       5, 3, POINTERSIZE_HEX);
 
@@ -5945,7 +5965,9 @@ DECLARE_API(Threads)
     {   // name, vptr, type, hasValue
         {"-special", &bPrintSpecialThreads, COBOOL, FALSE},
         {"-live", &bPrintLiveThreadsOnly, COBOOL, FALSE},
+#ifndef FEATURE_PAL
         {"/d", &dml, COBOOL, FALSE},
+#endif
     };
     if (!GetCMDOption(args, option, _countof(option), NULL, 0, NULL)) 
     {
@@ -6034,6 +6056,7 @@ DECLARE_API(WatsonBuckets)
         
     return Status;
 } // WatsonBuckets()
+#endif // FEATURE_PAL
 
 struct PendingBreakpoint
 {
@@ -6055,7 +6078,7 @@ struct PendingBreakpoint
     }
 
     PendingBreakpoint *pNext;
-    PendingBreakpoint() : pNext(NULL), ilOffset(0), lineNumber(0), methodToken(0)
+    PendingBreakpoint() : lineNumber(0), ilOffset(0), methodToken(0), pNext(NULL) 
     {
         szModuleName[0] = L'\0';
         szFunctionName[0] = L'\0';
@@ -6099,9 +6122,13 @@ void IssueDebuggerBPCommand ( CLRDATA_ADDRESS addr )
             wcscpy_s(wszNameBuffer, _countof(wszNameBuffer), W("UNKNOWN"));        
         }
 
+#ifndef FEATURE_PAL
         sprintf_s(buffer, _countof(buffer), "bp %p", (void*) (size_t) addr);
+#else
+        sprintf_s(buffer, _countof(buffer), "breakpoint set --address 0x%p", (void*) (size_t) addr);
+#endif
         ExtOut("Setting breakpoint: %s [%S]\n", buffer, wszNameBuffer);
-        g_ExtControl->Execute(DEBUG_EXECUTE_NOT_LOGGED, buffer ,0);
+        g_ExtControl->Execute(DEBUG_EXECUTE_NOT_LOGGED, buffer, 0);
 
         if ( curLimit < MaxBPsCached )
             alreadyPlacedBPs[curLimit++] = addr;
@@ -6257,6 +6284,7 @@ public:
         }
     }
 
+#ifndef FEATURE_PAL
     void SaveBreakpoints(FILE* pFile)
     {
         PendingBreakpoint *pCur = m_breakpoints;
@@ -6269,6 +6297,7 @@ public:
             pCur = pCur->pNext;
         }
     }
+#endif
 
     void ClearBreakpoint(size_t breakPointToClear)
     {
@@ -6325,11 +6354,11 @@ public:
 
         //get a pointer to just the filename (the portion after the last backslash)
         WCHAR* pModuleFilename = wszNameBuffer;
-        WCHAR* pSlash = wcschr(pModuleFilename, L'\\');
+        WCHAR* pSlash = _wcschr(pModuleFilename, DIRECTORY_SEPARATOR_CHAR_W);
         while(pSlash != NULL)
         {
             pModuleFilename = pSlash+1;
-            pSlash = wcschr(pModuleFilename, L'\\');
+            pSlash = _wcschr(pModuleFilename, DIRECTORY_SEPARATOR_CHAR_W);
         }
 
         ImageInfo ii;
@@ -6375,7 +6404,7 @@ public:
         HRESULT Status = S_OK;
         IfFailRet(g_sos->GetModule(mod, &module));
 
-        WideCharToMultiByte(CP_ACP, 0, pModuleName, (int) (wcslen(pModuleName) + 1),
+        WideCharToMultiByte(CP_ACP, 0, pModuleName, (int) (_wcslen(pModuleName) + 1),
             szName, mdNameLen, NULL, NULL);            
 
         ArrayHolder<DWORD_PTR> moduleList = ModuleFromName(szName, &numModule);
@@ -6480,7 +6509,7 @@ private:
         {
             if (pCur->ModuleMatches(mod) && 
                 _wcsicmp(pCur->szModuleName, szModule) == 0 &&
-                wcscmp(pCur->szFunctionName, szName) == 0)
+                _wcscmp(pCur->szFunctionName, szName) == 0)
             {
                 return TRUE;
             }
@@ -6680,9 +6709,7 @@ public:
                     DacpGetModuleAddress dgma;
                     if (SUCCEEDED(dgma.Request(pMod)))
                     {
-#ifndef FEATURE_PAL
                         g_bpoints.Update(TO_TADDR(dgma.ModulePtr), FALSE);
-#endif
                     }
                     else
                     {
@@ -6716,9 +6743,7 @@ public:
         DacpGetModuleAddress dgma;
         if (SUCCEEDED(dgma.Request(mod)))
         {
-#ifndef FEATURE_PAL
             g_bpoints.Update(TO_TADDR(dgma.ModulePtr), TRUE);
-#endif
         }
 
         if(!g_fAllowJitOptimization)
@@ -6747,9 +6772,7 @@ public:
         DacpGetModuleAddress dgma;
         if (SUCCEEDED(dgma.Request(mod)))
         {
-#ifndef FEATURE_PAL
             g_bpoints.RemovePendingForModule(TO_TADDR(dgma.ModulePtr));
-#endif
         }
 
         m_dbgStatus = DEBUG_STATUS_GO_HANDLED;
@@ -6831,15 +6854,16 @@ BOOL CheckCLRNotificationEvent(DEBUG_LAST_EVENT_INFO_EXCEPTION* pdle)
 {
     ULONG Type, ProcessId, ThreadId;
     ULONG ExtraInformationUsed;
-    HRESULT Status = g_ExtControl->GetLastEventInformation( &Type,
-                                                    &ProcessId,
-                                                    &ThreadId,
-                                                    pdle,
-                                                    sizeof(DEBUG_LAST_EVENT_INFO_EXCEPTION),
-                                                    &ExtraInformationUsed,
-                                                    NULL,
-                                                    0,
-                                                    NULL);
+    HRESULT Status = g_ExtControl->GetLastEventInformation(
+        &Type,
+        &ProcessId,
+        &ThreadId,
+        pdle,
+        sizeof(DEBUG_LAST_EVENT_INFO_EXCEPTION),
+        &ExtraInformationUsed,
+        NULL,
+        0,
+        NULL);
 
     if (Status != S_OK || Type != DEBUG_EVENT_EXCEPTION)
     {
@@ -6852,11 +6876,10 @@ BOOL CheckCLRNotificationEvent(DEBUG_LAST_EVENT_INFO_EXCEPTION* pdle)
     }
 
     return TRUE;
-    }
+}
 
 HRESULT HandleCLRNotificationEvent()
 {
-    HRESULT Status = E_FAIL;
     /*
      * Did we get module load notification? If so, check if any in our pending list
      * need to be registered for jit notification.
@@ -6870,12 +6893,13 @@ HRESULT HandleCLRNotificationEvent()
     if (!CheckCLRNotificationEvent(&dle))
     {
         ExtOut("Expecting first chance CLRN exception\n");
-        return Status;
+        return E_FAIL;
     }
 
     // Notification only needs to live for the lifetime of the call below, so it's a non-static
     // local.
-    if (g_clrData->TranslateExceptionRecordToNotification(&dle.ExceptionRecord, &Notification) != S_OK)
+    HRESULT Status = g_clrData->TranslateExceptionRecordToNotification(&dle.ExceptionRecord, &Notification);
+    if (Status != S_OK)
     {
         ExtOut("Error processing exception notification\n");
         return Status;
@@ -6887,16 +6911,19 @@ HRESULT HandleCLRNotificationEvent()
             case DEBUG_STATUS_GO:
             case DEBUG_STATUS_GO_HANDLED:
             case DEBUG_STATUS_GO_NOT_HANDLED:
+#ifndef FEATURE_PAL
                 g_ExtControl->Execute(DEBUG_EXECUTE_NOT_LOGGED, "g", 0);
+#else
+                g_ExtControl->Execute(DEBUG_EXECUTE_NOT_LOGGED, "process continue", 0);
+#endif
                 break;
             default:
                 break;
         }
     }
 
-    return Status;
+    return S_OK;
 }
-
 
 DECLARE_API(HandleCLRN)
 {
@@ -6906,7 +6933,6 @@ DECLARE_API(HandleCLRN)
     return HandleCLRNotificationEvent();
 }
 
-#ifndef FEATURE_PAL
 DECLARE_API(bpmd)
 {
     INIT_API_NOEE();    
@@ -7215,6 +7241,7 @@ DECLARE_API(bpmd)
         }
         else if (MethodDescData.bIsDynamic)
         {
+#ifndef FEATURE_PAL
             // Dynamic methods don't have JIT notifications. This is something we must
             // fix in the next release. Until then, you have a cumbersome user experience.
             ExtOut("This DynamicMethodDesc is not yet JITTED. Placing memory breakpoint at %p\n",
@@ -7231,12 +7258,15 @@ DECLARE_API(bpmd)
                 (void*) (size_t) MethodDescData.AddressOfNativeCodeSlot,
                 (void*) (size_t) MethodDescData.AddressOfNativeCodeSlot);
 
-            Status = g_ExtControl->Execute(DEBUG_EXECUTE_NOT_LOGGED, buffer ,0);
+            Status = g_ExtControl->Execute(DEBUG_EXECUTE_NOT_LOGGED, buffer, 0);
             if (FAILED(Status))
             {
                 ExtOut("Unable to set breakpoint with IDebugControl::Execute: %x\n",Status);
                 ExtOut("Attempted to run: %s\n", buffer);                
             }            
+#else
+            ExtErr("This DynamicMethodDesc is not yet JITTED %p\n", MethodDescData.AddressOfNativeCodeSlot);
+#endif // FEATURE_PAL
         }
         else
         {
@@ -7260,13 +7290,24 @@ DECLARE_API(bpmd)
     if (bNeedNotificationExceptions)
     {
         ExtOut("Adding pending breakpoints...\n");
+#ifndef FEATURE_PAL
         sprintf_s(buffer, _countof(buffer), "sxe -c \"!HandleCLRN\" clrn");
-        Status = g_ExtControl->Execute(DEBUG_EXECUTE_NOT_LOGGED, buffer ,0);        
+        Status = g_ExtControl->Execute(DEBUG_EXECUTE_NOT_LOGGED, buffer, 0);        
+#else
+        sprintf_s(buffer, _countof(buffer), "breakpoint set -E c++ -h false -w true");
+        Status = g_ExtControl->Execute(DEBUG_EXECUTE_NOT_LOGGED, buffer, 0);        
+        if (Status == S_OK)
+        {
+            sprintf_s(buffer, _countof(buffer), "breakpoint command add -o \"sos HandleCLRN\"");
+            Status = g_ExtControl->Execute(DEBUG_EXECUTE_NOT_LOGGED, buffer, 0);
+        }
+#endif // FEATURE_PAL
     }
 
     return Status;
 }
-#endif
+
+#ifndef FEATURE_PAL
 
 /**********************************************************************\
 * Routine Description:                                                 *
@@ -7423,7 +7464,9 @@ DECLARE_API(FindAppDomain)
 
     CMDOption option[] = 
     {   // name, vptr, type, hasValue
+#ifndef FEATURE_PAL
         {"/d", &dml, COBOOL, FALSE},
+#endif
     };
     CMDValue arg[] = 
     {   // vptr, type
@@ -7602,6 +7645,8 @@ DECLARE_API(COMState)
 }
 #endif // FEATURE_COMINTEROP
 
+#endif // FEATURE_PAL
+
 BOOL traverseEh(UINT clauseIndex,UINT totalClauses,DACEHInfo *pEHInfo,LPVOID token)
 {
     size_t methodStart = (size_t) token;
@@ -7679,7 +7724,6 @@ BOOL traverseEh(UINT clauseIndex,UINT totalClauses,DACEHInfo *pEHInfo,LPVOID tok
     return TRUE;
 }
 
-
 DECLARE_API(EHInfo)
 {
     INIT_API();
@@ -7753,7 +7797,6 @@ DECLARE_API(EHInfo)
     
     return Status;
 }
-
 
 /**********************************************************************\
 * Routine Description:                                                 *
@@ -7998,6 +8041,7 @@ BOOL gatherEh(UINT clauseIndex,UINT totalClauses,DACEHInfo *pEHInfo,LPVOID token
     return TRUE;
 }
 
+#ifndef FEATURE_PAL
 
 /**********************************************************************\
 * Routine Description:                                                 *
@@ -8680,7 +8724,7 @@ DECLARE_API (ProcInfo)
             WCHAR *pt = buffer;
             WCHAR *end = pt;
             while (pt < &buffer[DT_OS_PAGE_SIZE/2]) {
-                end = wcschr (pt, L'\0');
+                end = _wcschr (pt, L'\0');
                 if (end == NULL) {
                     char format[20];
                     sprintf_s (format,_countof (format), "%dS", &buffer[DT_OS_PAGE_SIZE/2] - pt);
@@ -8870,7 +8914,9 @@ DECLARE_API(Token2EE)
 
     CMDOption option[] = 
     {   // name, vptr, type, hasValue
+#ifndef FEATURE_PAL
         {"/d", &dml, COBOOL, FALSE},
+#endif
     };
 
     CMDValue arg[] = 
@@ -8925,7 +8971,7 @@ DECLARE_API(Token2EE)
             FileNameForModule(dwAddr, FileName);
 
             // We'd like a short form for this output
-            LPWSTR pszFilename = wcsrchr (FileName, L'\\');
+            LPWSTR pszFilename = _wcsrchr (FileName, DIRECTORY_SEPARATOR_CHAR_W);
             if (pszFilename == NULL)
             {
                 pszFilename = FileName;
@@ -8962,7 +9008,9 @@ DECLARE_API(Name2EE)
 
     CMDOption option[] = 
     {   // name, vptr, type, hasValue
+#ifndef FEATURE_PAL
         {"/d", &dml, COBOOL, FALSE},
+#endif
     };
     
     CMDValue arg[] = 
@@ -9053,7 +9101,7 @@ DECLARE_API(Name2EE)
             FileNameForModule (dwAddr, FileName);
 
             // We'd like a short form for this output
-            LPWSTR pszFilename = wcsrchr (FileName, L'\\');
+            LPWSTR pszFilename = _wcsrchr (FileName, DIRECTORY_SEPARATOR_CHAR_W);
             if (pszFilename == NULL)
             {
                 pszFilename = FileName;
@@ -9072,7 +9120,6 @@ DECLARE_API(Name2EE)
     return Status;
 }
 
-#ifndef FEATURE_PAL
 
 #ifndef FEATURE_PAL
 DECLARE_API(PathTo)
@@ -9126,7 +9173,6 @@ DECLARE_API(PathTo)
 \**********************************************************************/
 DECLARE_API(GCRoot)
 {
-#ifndef FEATURE_PAL
     INIT_API();
     MINIDUMP_NOT_SUPPORTED();    
 
@@ -9140,7 +9186,9 @@ DECLARE_API(GCRoot)
     {   // name, vptr, type, hasValue
         {"-nostacks", &bNoStacks, COBOOL, FALSE},
         {"-all", &all, COBOOL, FALSE},
+#ifndef FEATURE_PAL
         {"/d", &dml, COBOOL, FALSE},
+#endif
     };
     CMDValue arg[] = 
 
@@ -9170,10 +9218,9 @@ DECLARE_API(GCRoot)
         ExtOut("Found %d unique roots (run '!GCRoot -all' to see all roots).\n", i);
 
     return Status;
-#else
-    return E_NOTIMPL;
-#endif
 }
+
+#ifndef FEATURE_PAL
 
 DECLARE_API(GCWhere)
 {
@@ -9647,7 +9694,7 @@ private:
             TADDR objAddr = 0;
             TADDR mtAddr = 0;
             size_t size = 0;
-            const wchar_t *mtName = 0;
+            const WCHAR *mtName = 0;
             const char *type = 0;
             
             if (FAILED(MOVE(objAddr, data[i].Handle)))
@@ -9809,7 +9856,7 @@ BOOL derivedFrom(CLRDATA_ADDRESS mtObj, __in_z LPWSTR baseString)
             break;            
         }
         NameForMT_s (TO_TADDR(walkMT), g_mdName, mdNameLen);                
-        if (wcscmp (baseString, g_mdName) == 0)
+        if (_wcscmp (baseString, g_mdName) == 0)
         {
             return TRUE;
         }
@@ -9872,7 +9919,7 @@ DECLARE_API(TraceToCode)
 
                 // get the MethodDesc name
                 if ((g_sos->GetMethodDescName(addr, 1024, wszNameBuffer, NULL) == S_OK) &&
-                    wcsncmp(W("DomainBoundILStubClass"), wszNameBuffer, 22)==0)
+                    _wcsncmp(W("DomainBoundILStubClass"), wszNameBuffer, 22)==0)
                 {
                     ExtOut("ILStub\n");
                     codeType = 2;
@@ -9971,7 +10018,7 @@ DECLARE_API(GetCodeTypeFlags)
 
         // get the MethodDesc name
         if (g_sos->GetMethodDescName(addr, 1024, wszNameBuffer, NULL) == S_OK &&
-            wcsncmp(W("DomainBoundILStubClass"), wszNameBuffer, 22)==0)
+            _wcsncmp(W("DomainBoundILStubClass"), wszNameBuffer, 22)==0)
         {
             ExtOut("ILStub\n");
             codeType = 2;
@@ -10005,7 +10052,7 @@ DECLARE_API(GetCodeTypeFlags)
     sprintf_s(buffer,_countof (buffer),
         "r$t%d=%x",
         preg, codeType);
-    Status = g_ExtControl->Execute(DEBUG_EXECUTE_NOT_LOGGED, buffer ,0);
+    Status = g_ExtControl->Execute(DEBUG_EXECUTE_NOT_LOGGED, buffer, 0);
     if (FAILED(Status))
     {
         ExtOut("Error setting register $t%d\n", preg);
@@ -10074,7 +10121,7 @@ DECLARE_API(StopOnException)
     sprintf_s(buffer,_countof (buffer),
         "r$t%d=0",
         preg);
-    Status = g_ExtControl->Execute(DEBUG_EXECUTE_NOT_LOGGED, buffer ,0);
+    Status = g_ExtControl->Execute(DEBUG_EXECUTE_NOT_LOGGED, buffer, 0);
     if (FAILED(Status))
     {
         ExtOut("Error initialized register $t%d to zero\n", preg);
@@ -10094,7 +10141,7 @@ DECLARE_API(StopOnException)
             EXCEPTION_COMPLUS
             );
             
-        Status = g_ExtControl->Execute(DEBUG_EXECUTE_NOT_LOGGED, buffer ,0);        
+        Status = g_ExtControl->Execute(DEBUG_EXECUTE_NOT_LOGGED, buffer, 0);        
         if (FAILED(Status))
         {
             ExtOut("Error setting breakpoint: %s\n", buffer);
@@ -10134,13 +10181,13 @@ DECLARE_API(StopOnException)
         if (SafeReadMemory(taLTOH, &taMT, sizeof(taMT), NULL))
         {            
             NameForMT_s (taMT, g_mdName, mdNameLen);
-            if ((wcscmp(g_mdName,typeNameWide) == 0) ||
+            if ((_wcscmp(g_mdName,typeNameWide) == 0) ||
                 (fDerived && derivedFrom(taMT, typeNameWide)))
             {
                 sprintf_s(buffer,_countof (buffer),
                     "r$t%d=1",
                     preg);
-                Status = g_ExtControl->Execute(DEBUG_EXECUTE_NOT_LOGGED, buffer ,0);
+                Status = g_ExtControl->Execute(DEBUG_EXECUTE_NOT_LOGGED, buffer, 0);
                 if (FAILED(Status))
                 {
                     ExtOut("Failed to execute the following command: %s\n", buffer);
@@ -10459,11 +10506,11 @@ private:
     {
         if(currentExpansion == NULL || varToExpand == NULL) return FALSE;
 
-        size_t varToExpandLen = wcslen(varToExpand);
-        size_t currentExpansionLen = wcslen(currentExpansion);
+        size_t varToExpandLen = _wcslen(varToExpand);
+        size_t currentExpansionLen = _wcslen(currentExpansion);
         if(currentExpansionLen > varToExpandLen) return FALSE;
         if(currentExpansionLen < varToExpandLen && varToExpand[currentExpansionLen] != L'.') return FALSE;
-        if(wcsncmp(currentExpansion, varToExpand, currentExpansionLen) != 0) return FALSE;
+        if(_wcsncmp(currentExpansion, varToExpand, currentExpansionLen) != 0) return FALSE;
 
         return TRUE;
     }
@@ -10482,7 +10529,7 @@ private:
         if(FAILED(pType->GetBase(&pBaseType)) || pBaseType == NULL) return FALSE;
         if(FAILED(GetTypeOfValue(pBaseType, baseTypeName, mdNameLen))) return  FALSE;
 
-        return (wcsncmp(baseTypeName, W("System.Enum"), 11) == 0);
+        return (_wcsncmp(baseTypeName, W("System.Enum"), 11) == 0);
     }
     static HRESULT AddGenericArgs(ICorDebugType * pType, __inout_ecount(typeNameLen) WCHAR* typeName, ULONG typeNameLen)
     {
@@ -10853,7 +10900,7 @@ private:
         else ExtOut("   (%d elements)\n", cElements);
 
         if(!ShouldExpandVariable(varToExpand, currentExpansion)) return S_OK;
-        size_t currentExpansionLen = wcslen(currentExpansion);
+        size_t currentExpansionLen = _wcslen(currentExpansion);
 
         for (ULONG32 i=0; i < cElements; i++)
         {
@@ -11076,7 +11123,7 @@ private:
                     if(SUCCEEDED(pMD->GetParamForMethodIndex(methodDef, idx, &paramDef)))
                         pMD->GetParamProps(paramDef, NULL, NULL, paramName, mdNameLen, &paramNameLen, NULL, NULL, NULL, NULL);
                 }
-                if(wcslen(paramName) == 0)
+                if(_wcslen(paramName) == 0)
                     swprintf_s(paramName, mdNameLen, W("param_%d\0"), i);
 
                 ToRelease<ICorDebugValue> pValue;
@@ -11149,7 +11196,7 @@ private:
                     ULONG cArgsFetched;
                     Status = pLocalsEnum->Next(1, &pValue, &cArgsFetched);
                 }
-                if(wcslen(paramName) == 0)
+                if(_wcslen(paramName) == 0)
                     swprintf_s(paramName, mdNameLen, W("local_%d\0"), i);
 
                 if (FAILED(Status))
@@ -11197,7 +11244,7 @@ private:
     static HRESULT ProcessFields(ICorDebugValue* pInputValue, ICorDebugType* pTypeCast, ICorDebugILFrame * pILFrame, int indent, __in_z WCHAR* varToExpand, __inout_ecount(currentExpansionSize) WCHAR* currentExpansion, DWORD currentExpansionSize, int currentFrame)
     {
         if(!ShouldExpandVariable(varToExpand, currentExpansion)) return S_OK;
-        size_t currentExpansionLen = wcslen(currentExpansion);
+        size_t currentExpansionLen = _wcslen(currentExpansion);
 
         HRESULT Status = S_OK;
 
@@ -11233,9 +11280,9 @@ private:
         ToRelease<ICorDebugType> pBaseType;
         if(SUCCEEDED(pType->GetBase(&pBaseType)) && pBaseType != NULL && SUCCEEDED(GetTypeOfValue(pBaseType, baseTypeName, mdNameLen)))
         {
-            if(wcsncmp(baseTypeName, W("System.Enum"), 11) == 0)
+            if(_wcsncmp(baseTypeName, W("System.Enum"), 11) == 0)
                 return S_OK;
-            else if(wcsncmp(baseTypeName, W("System.Object"), 13) != 0 && wcsncmp(baseTypeName, W("System.ValueType"), 16) != 0)
+            else if(_wcsncmp(baseTypeName, W("System.Object"), 13) != 0 && _wcsncmp(baseTypeName, W("System.ValueType"), 16) != 0)
             {
                 currentExpansion[currentExpansionLen] = W('\0');
                 wcscat_s(currentExpansion, currentExpansionSize, W(".\0"));
@@ -11485,6 +11532,10 @@ public:
         }
         ExtOut("=============================================================================\n");
 
+#ifdef FEATURE_PAL
+        // Temporary until we get a process exit notification plumbed from lldb
+        UninitCorDebugInterface();
+#endif
         return S_OK;
     }
 };
@@ -11495,7 +11546,7 @@ WString BuildRegisterOutput(const SOSStackRefData &ref, bool printObj)
     
     if (ref.HasRegisterInformation)
     {
-        wchar_t reg[32];
+        WCHAR reg[32];
         HRESULT hr = g_sos->GetRegisterName(ref.Register, _countof(reg), reg, NULL);
         if (SUCCEEDED(hr))
             res = reg;
@@ -11551,7 +11602,7 @@ void PrintRef(const SOSStackRefData &ref, TableOutput &out)
     
     if (ref.Object && (ref.Flags & SOSRefInterior) == 0)
     {
-        wchar_t type[128];
+        WCHAR type[128];
         sos::BuildTypeWithExtraInfo(TO_TADDR(ref.Object), _countof(type), type);
         
         res += WString(W(" - ")) + type;
@@ -12113,7 +12164,9 @@ DECLARE_API(ClrStack)
         {"-n", &bSuppressLines, COBOOL, FALSE},
         {"-i", &bICorDebug, COBOOL, FALSE},
         {"-gc", &bGC, COBOOL, FALSE},
+#ifndef FEATURE_PAL
         {"/d", &dml, COBOOL, FALSE},
+#endif
     };
     CMDValue arg[] = 
     {   // vptr, type
@@ -12154,7 +12207,7 @@ DECLARE_API(ClrStack)
         if(cvariableName.data != NULL && strlen(cvariableName.data) > 0)
             swprintf_s(wvariableName, mdNameLen, W("%S\0"), cvariableName.data);
         
-        if(wcslen(wvariableName) > 0)
+        if(_wcslen(wvariableName) > 0)
             bParams = bLocals = TRUE;
 
         EnableDMLHolder dmlHolder(TRUE);
@@ -12554,7 +12607,7 @@ static HRESULT DumpMDInfoBuffer(DWORD_PTR dwStartAddr, DWORD Flags, ULONG64 Esp,
     //   returns a module qualified method name
     HRESULT hr = g_sos->GetMethodDescName(dwStartAddr, 1024, wszNameBuffer, NULL);
 
-    WCHAR* pwszMethNameBegin = (hr != S_OK ? NULL : wcschr(wszNameBuffer, L'!'));
+    WCHAR* pwszMethNameBegin = (hr != S_OK ? NULL : _wcschr(wszNameBuffer, L'!'));
     if (!bModuleNameWorked && hr == S_OK && pwszMethNameBegin != NULL)
     {
         // if we weren't able to get the module name, but GetMethodName returned
@@ -12920,7 +12973,7 @@ Exit:
         }
         else
         {
-            *puiTextLength = wcslen (so.String()) + 1;
+            *puiTextLength = _wcslen (so.String()) + 1;
         }
 
         if (puiTransitionContextCount)
@@ -13028,14 +13081,14 @@ BOOL FormatFromRemoteString(DWORD_PTR strObjPointer, __out_ecount(cchString) PWS
     UINT Length = 0;
     while(1)
     {
-        if (wcsncmp(pwszPointer, PSZSEP, _countof(PSZSEP)-1) != 0)
+        if (_wcsncmp(pwszPointer, PSZSEP, _countof(PSZSEP)-1) != 0)
         {
             delete [] pwszBuf;
             return bRet;
         }
 
-        pwszPointer += wcslen(PSZSEP);
-        LPWSTR nextPos = wcsstr(pwszPointer, PSZSEP);
+        pwszPointer += _wcslen(PSZSEP);
+        LPWSTR nextPos = _wcsstr(pwszPointer, PSZSEP);
         if (nextPos == NULL)
         {
             // Done! Note that we are leaving the function before we add the last
@@ -13052,7 +13105,7 @@ BOOL FormatFromRemoteString(DWORD_PTR strObjPointer, __out_ecount(cchString) PWS
 
         // Note that we don't add a newline because we have this embedded in wszLineBuffer
         swprintf_s(wszLineBuffer, _countof(wszLineBuffer), W("    %p %p %s"), (void*)(size_t)-1, (void*)(size_t)-1, pwszPointer);
-        Length += (UINT)wcslen(wszLineBuffer);
+        Length += (UINT)_wcslen(wszLineBuffer);
         
         if (wszBuffer)
         {            
@@ -13728,7 +13781,7 @@ _EFN_GetManagedObjectName(
 
     sos::Object obj = TO_TADDR(objAddr);
 
-    if (WideCharToMultiByte(CP_ACP, 0, obj.GetTypeName(), (int) (wcslen(obj.GetTypeName()) + 1),
+    if (WideCharToMultiByte(CP_ACP, 0, obj.GetTypeName(), (int) (_wcslen(obj.GetTypeName()) + 1),
                             szName, cbName, NULL, NULL) == 0)
     {
         return E_FAIL;
@@ -13953,4 +14006,4 @@ Help(PDEBUG_CLIENT Client, PCSTR Args)
     return S_OK;
 }
 
-#endif // !FEATURE_PAL
+#endif // FEATURE_PAL

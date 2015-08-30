@@ -2424,7 +2424,7 @@ void                CodeGen::genExitCode(BasicBlock * block)
  */
 
 void            CodeGen::genJumpToThrowHlpBlk(emitJumpKind          jumpKind,
-                                              Compiler::addCodeKind codeKind,
+                                              SpecialCodeKind       codeKind,
                                               GenTreePtr            failBlk)
 {
     if (!compiler->opts.compDbgCode)
@@ -2521,7 +2521,7 @@ void            CodeGen::genCheckOverflow(GenTreePtr tree)
 
     // Jump to the block which will throw the expection
 
-    genJumpToThrowHlpBlk(jumpKind, Compiler::ACK_OVERFLOW);
+    genJumpToThrowHlpBlk(jumpKind, SCK_OVERFLOW);
 }
 
 #if FEATURE_EH_FUNCLETS
@@ -10824,6 +10824,9 @@ CORINFO_CLASS_HANDLE Compiler::GetHfaClassHandle(GenTreePtr tree)
         case GT_ASG:
             assert(tree->gtOp.gtOp1->gtOper == GT_LCL_VAR || tree->gtOp.gtOp1->gtOper == GT_LCL_FLD);
             return GetHfaClassHandle(tree->gtOp.gtOp1);
+            
+        default:
+            unreached();
         }
     }
     return NO_CLASS_HANDLE;

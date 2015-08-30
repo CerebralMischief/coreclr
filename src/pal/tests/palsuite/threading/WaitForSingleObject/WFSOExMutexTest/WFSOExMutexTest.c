@@ -19,8 +19,8 @@
 /*Based on SleepEx/test2 */
 
 const int ChildThreadWaitTime = 4000;
-const int InterruptTime = 2000; 
-const int AcceptableDelta = 100;
+const int InterruptTime = 2000;
+const DWORD AcceptableDelta = 300;
 
 void RunTest(BOOL AlertThread);
 VOID PALAPI APCFunc(ULONG_PTR dwParam);
@@ -60,9 +60,9 @@ int __cdecl main( int argc, char **argv )
 	*/
 	
 	/* Create a mutex that is not in the signalled state */
-    hMutex = CreateMutex( NULL, 			//No security attributes
-    						TRUE,			//Iniitally owned
-    						"SomeMutex");	//Name of mutex
+    hMutex = CreateMutex(NULL,      //No security attributes
+                         TRUE,      //Iniitally owned
+                         NULL);     //Name of mutex
 
     if (hMutex == NULL)
     {

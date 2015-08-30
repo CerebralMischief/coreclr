@@ -1,6 +1,9 @@
 include_directories("../../pal/prebuilt/corerror")
 if(WIN32)
     set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} /NOENTRY")
+    # remove /ltcg from resource-only libraries
+    string(REPLACE "/LTCG" "" CMAKE_SHARED_LINKER_FLAGS_RELEASE ${CMAKE_SHARED_LINKER_FLAGS_RELEASE})
+    string(REPLACE "/LTCG" "" CMAKE_SHARED_LINKER_FLAGS_RELWITHDEBINFO ${CMAKE_SHARED_LINKER_FLAGS_RELWITHDEBINFO})
 else()
 
     set (RC_TO_CPP ${CMAKE_CURRENT_SOURCE_DIR}/rctocpp.awk)
@@ -25,7 +28,7 @@ else()
             COMMAND ${CMAKE_CXX_COMPILER} -E -P ${PREPROCESS_DEFINITIONS} ${INCLUDE_DIRECTORIES} -o ${PREPROCESSED_SOURCE} -x c ${SOURCE}
             # Convert the preprocessed .rc file to a C++ file which will be used to make a static lib.
             COMMAND ${AWK} -f ${RC_TO_CPP} -f ${PROCESS_RC} ${PREPROCESSED_SOURCE} >${RESOURCE_ENTRY_ARRAY_CPP}
-            DEPENDS ${SOURCE}
+            DEPENDS ${SOURCE} ${RC_TO_CPP} ${PROCESS_RC}
         )
 
         include_directories(${RESOURCE_STRING_HEADER_DIR})
