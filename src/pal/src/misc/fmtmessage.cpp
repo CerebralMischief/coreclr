@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*++
 
@@ -206,7 +205,7 @@ static LPWSTR FMTMSG_ProcessPrintf( wchar_t c ,
     UINT nFormatLength = 0;
     int nBufferLength = 0;
 
-    TRACE( "FMTMSG_ProcessPrintf( %C, %S, %S )\n", c, 
+    TRACE( "FMTMSG_ProcessPrintf( %C, %S, %p )\n", c,
            lpPrintfString, lpInsertString );
 
     switch ( c )
@@ -300,7 +299,6 @@ FormatMessageW(
     LPWSTR lpReturnString = NULL;
     LPWSTR lpWorkingString = NULL; 
     
-
     PERF_ENTRY(FormatMessageW);
     ENTRY( "FormatMessageW(dwFlags=%#x, lpSource=%p, dwMessageId=%#x, "
            "dwLanguageId=%#x, lpBuffer=%p, nSize=%u, va_list=%p)\n", 
@@ -689,7 +687,7 @@ exit: /* Function clean-up and exit. */
             LocalFree( lpReturnString );
         }
     }
-    else /* Error, something occured. */
+    else /* Error, something occurred. */
     {
         if ( lpReturnString )
         {

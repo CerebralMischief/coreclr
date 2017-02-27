@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //*****************************************************************************
 
 // 
@@ -63,6 +62,9 @@ public:
     virtual HRESULT STDMETHODCALLTYPE ContinueStatusChanged(
         DWORD dwThreadId,
         CORDB_CONTINUE_STATUS dwContinueStatus);
+
+    virtual HRESULT STDMETHODCALLTYPE VirtualUnwind(
+        DWORD threadId, ULONG32 contextSize, PBYTE context);
 
 private:
     DbgTransportTarget  * m_pProxy;
@@ -130,6 +132,7 @@ void ShimRemoteDataTarget::Dispose()
         m_pProxy->ReleaseTransport(m_pTransport);
     }
 
+    m_pTransport = NULL;
     m_hr = CORDBG_E_OBJECT_NEUTERED;
 }
 
@@ -286,7 +289,6 @@ ShimRemoteDataTarget::GetThreadContext(
 {
     ReturnFailureIfStateNotOk();
         
-#ifdef FEATURE_DBGIPC_TRANSPORT_DI
     // GetThreadContext() is currently not implemented in ShimRemoteDataTarget, which is used with our pipe transport 
     // (FEATURE_DBGIPC_TRANSPORT_DI). Pipe transport is used on POSIX system, but occasionally we can turn it on for Windows for testing,
     // and then we'd like to have same behavior as on POSIX system (zero context).
@@ -297,15 +299,8 @@ ShimRemoteDataTarget::GetThreadContext(
     // Instead, we just zero out the seed CONTEXT for the stackwalk.  This tells the stackwalker to
     // start the stackwalk with the first explicit frame.  This won't work when we do native debugging, 
     // but that won't happen on the POSIX systems since they don't support native debugging.
-    ZeroMemory(pContext, contextSize);        
-    return S_OK;
-#else
-    // ICorDebugDataTarget::GetThreadContext() and ICorDebugDataTarget::SetThreadContext() are currently only 
-    // required for interop-debugging and inspection of floating point registers, both of which are not 
-    // implemented on Mac.
-    _ASSERTE(!"The remote data target doesn't know how to get a thread's CONTEXT.");
+    ZeroMemory(pContext, contextSize);
     return E_NOTIMPL;
-#endif  // DFEATURE_DBGIPC_TRANSPORT_DI
 }
 
 // impl of interface method ICorDebugMutableDataTarget::SetThreadContext
@@ -338,4 +333,17 @@ ShimRemoteDataTarget::ContinueStatusChanged(
         return m_fpContinueStatusChanged(m_pContinueStatusChangedUserData, dwThreadId, dwContinueStatus);
     }
     return E_NOTIMPL;
+}
+
+//---------------------------------------------------------------------------------------
+//
+// Unwind the stack to the next frame.
+//
+// Return Value: 
+//     context filled in with the next frame
+//
+HRESULT STDMETHODCALLTYPE 
+ShimRemoteDataTarget::VirtualUnwind(DWORD threadId, ULONG32 contextSize, PBYTE context)
+{
+    return m_pTransport->VirtualUnwind(threadId, contextSize, context);
 }

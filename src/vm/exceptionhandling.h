@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 
 //
@@ -27,11 +26,13 @@ ProcessCLRException(IN     PEXCEPTION_RECORD     pExceptionRecord
                     IN OUT PT_DISPATCHER_CONTEXT pDispatcherContext);
 
 
+#ifndef FEATURE_PAL
 void __declspec(noinline)
 ClrUnwindEx(EXCEPTION_RECORD* pExceptionRecord,
                  UINT_PTR          ReturnValue,
                  UINT_PTR          TargetIP,
                  UINT_PTR          TargetFrameSp);
+#endif // !FEATURE_PAL
 
 typedef DWORD_PTR   (HandlerFn)(UINT_PTR uStackFrame, Object* pExceptionObj);
 
@@ -70,9 +71,7 @@ public:
 
     ExceptionTracker() :
         m_pThread(NULL),
-        m_hThrowable(NULL),
-        m_hCallerToken(NULL),
-        m_hImpersonationToken(NULL)
+        m_hThrowable(NULL)
     {
 #ifndef DACCESS_COMPILE
         m_StackTraceInfo.Init();
@@ -88,11 +87,9 @@ public:
         m_CorruptionSeverity = NotSet;
 #endif // FEATURE_CORRUPTING_EXCEPTIONS
 
-#ifdef FEATURE_EXCEPTION_NOTIFICATIONS
         // By default, mark the tracker as not having delivered the first
         // chance exception notification
         m_fDeliveredFirstChanceNotification = FALSE;
-#endif // FEATURE_EXCEPTION_NOTIFICATIONS
 
         m_sfFirstPassTopmostFrame.Clear();
         
@@ -109,6 +106,10 @@ public:
         m_pInitialExplicitFrame = NULL;
         m_pLimitFrame = NULL;
         m_csfEHClauseOfCollapsedTracker.Clear();
+
+#ifdef FEATURE_PAL
+        m_fOwnsExceptionPointers = FALSE;
+#endif
     }
 
     ExceptionTracker(DWORD_PTR             dwExceptionPc,
@@ -122,9 +123,7 @@ public:
 // these members were added for resume frame processing
         m_pClauseForCatchToken(NULL),
 // end resume frame members
-        m_ExceptionCode(pExceptionRecord->ExceptionCode),
-        m_hCallerToken(NULL),
-        m_hImpersonationToken(NULL)
+        m_ExceptionCode(pExceptionRecord->ExceptionCode)
     {
         m_ptrs.ExceptionRecord  = pExceptionRecord;
         m_ptrs.ContextRecord    = pContextRecord;
@@ -148,11 +147,9 @@ public:
         m_CorruptionSeverity = NotSet;
 #endif // FEATURE_CORRUPTING_EXCEPTIONS
 
-#ifdef FEATURE_EXCEPTION_NOTIFICATIONS
         // By default, mark the tracker as not having delivered the first
         // chance exception notification
         m_fDeliveredFirstChanceNotification = FALSE;
-#endif // FEATURE_EXCEPTION_NOTIFICATIONS
 
         m_dwIndexClauseForCatch = 0;
         m_sfEstablisherOfActualHandlerFrame.Clear();
@@ -168,6 +165,10 @@ public:
         m_sfLastUnwoundEstablisherFrame.Clear();
         m_pInitialExplicitFrame = NULL;
         m_csfEHClauseOfCollapsedTracker.Clear();
+
+#ifdef FEATURE_PAL
+        m_fOwnsExceptionPointers = FALSE;
+#endif
     }
 
     ~ExceptionTracker()
@@ -184,9 +185,11 @@ public:
 
     static void InitializeCrawlFrame(CrawlFrame* pcfThisFrame, Thread* pThread, StackFrame sf, REGDISPLAY* pRD, 
                                      PT_DISPATCHER_CONTEXT pDispatcherContext, DWORD_PTR ControlPCForEHSearch, 
-                                     UINT_PTR* puMethodStartPC
-                                     ARM_ARG(ExceptionTracker *pCurrentTracker)
-                                     ARM64_ARG(ExceptionTracker *pCurrentTracker));
+                                     UINT_PTR* puMethodStartPC,
+                                     ExceptionTracker *pCurrentTracker);
+    
+    void InitializeCurrentContextForCrawlFrame(CrawlFrame* pcfThisFrame, PT_DISPATCHER_CONTEXT pDispatcherContext, StackFrame sfEstablisherFrame);
+
     static void InitializeCrawlFrameForExplicitFrame(CrawlFrame* pcfThisFrame, Frame* pFrame, MethodDesc *pMD);
 
 #ifndef DACCESS_COMPILE
@@ -300,12 +303,17 @@ public:
         return m_pInitialExplicitFrame;
     }
 
-    // Reset the range of explicit frames that covers already unwound frames.
-    void ResetUnwoundExplicitFramesRange()
+#ifdef FEATURE_PAL
+    // Reset the range of explicit frames, the limit frame and the scanned
+    // stack range before unwinding a sequence of native frames. These frames
+    // will be in the unwound part of the stack.
+    void CleanupBeforeNativeFramesUnwind()
     {
         m_pInitialExplicitFrame = NULL;
         m_pLimitFrame = NULL;
+        m_ScannedStackRange.Reset();
     }
+#endif // FEATURE_PAL
 
     // Determines if we have unwound to the specified parent method frame.
     // Currently this is only used for funclet skipping.
@@ -379,6 +387,16 @@ public:
 
     bool IsStackOverflowException();
 
+#if defined(FEATURE_PAL) && !defined(CROSS_COMPILE)
+    void TakeExceptionPointersOwnership(PAL_SEHException* ex)
+    {
+        _ASSERTE(ex->GetExceptionRecord() == m_ptrs.ExceptionRecord);
+        _ASSERTE(ex->GetContextRecord() == m_ptrs.ContextRecord);
+        ex->Clear();
+        m_fOwnsExceptionPointers = TRUE;
+    }
+#endif // FEATURE_PAL && !CROSS_COMPILE
+
 private:
     DWORD_PTR
         CallHandler(UINT_PTR                dwHandlerStartPC,
@@ -386,6 +404,7 @@ private:
                     EE_ILEXCEPTION_CLAUSE*  pEHClause,
                     MethodDesc*             pMD,
                     EHFuncletType funcletType
+                    X86_ARG(PT_CONTEXT pContextRecord)
                     ARM_ARG(PT_CONTEXT pContextRecord)
                     ARM64_ARG(PT_CONTEXT pContextRecord)
                     );
@@ -408,7 +427,7 @@ private:
 
         m_hThrowable = NULL;
     }
-#endif
+#endif // !DACCESS_COMPILE
 
     void SaveStackTrace();
 
@@ -552,14 +571,21 @@ public:
         return m_sfCallerOfActualHandlerFrame;
     }
 
-    StackFrame GetCallerOfCollapsedActualHandlingFrame()
+    StackFrame GetCallerOfEnclosingClause()
+    {
+        LIMITED_METHOD_CONTRACT;
+
+        return m_EnclosingClauseInfoForGCReporting.GetEnclosingClauseCallerSP();
+    }
+
+    StackFrame GetCallerOfCollapsedEnclosingClause()
     {
         LIMITED_METHOD_CONTRACT;
 
         return m_EnclosingClauseInfoOfCollapsedTracker.GetEnclosingClauseCallerSP();
     }
 
-#ifndef FEATURE_PAL          
+#ifndef FEATURE_PAL
 private:
     EHWatsonBucketTracker m_WatsonBucketTracker;
 public:
@@ -589,7 +615,6 @@ public:
     }
 #endif // FEATURE_CORRUPTING_EXCEPTIONS
 
-#ifdef FEATURE_EXCEPTION_NOTIFICATIONS
 private:
     BOOL                    m_fDeliveredFirstChanceNotification;
 
@@ -607,7 +632,6 @@ public:
     
         m_fDeliveredFirstChanceNotification = fDelivered;
     }
-#endif // FEATURE_EXCEPTION_NOTIFICATIONS
 
     // Returns the exception tracker previous to the current
     inline PTR_ExceptionTracker GetPreviousExceptionTracker()
@@ -628,6 +652,11 @@ public:
     bool IsInFirstPass()
     {
         return !m_ExceptionFlags.UnwindHasStarted();
+    }
+
+    EHClauseInfo* GetEHClauseInfo()
+    {
+        return &m_EHClauseInfo;
     }
     
 private: ;
@@ -681,38 +710,15 @@ private: ;
         bool     m_fEnclosingClauseIsFunclet;
     };
 
-    // This class saves partial state of an exception tracker that needs to
-    // be preserved when transitioning from the 2nd to 1st pass during the
-    // interleaved exception handling before processing next segment of
-    // managed stack frames.
-    // The exception tracker is recreated during such transition and
-    // only a subset of the exception tracker state defined by this class
-    // is propagated to the new tracker instance.
-    class PartialTrackerState
-    {
-        UINT_PTR m_uCatchToCallPC;
-        PTR_EXCEPTION_CLAUSE_TOKEN m_pClauseForCatchToken;
-        EE_ILEXCEPTION_CLAUSE m_ClauseForCatch;
-        ExceptionFlags m_ExceptionFlags;
-        StackFrame m_sfLastUnwoundEstablisherFrame;
-        EHClauseInfo m_EHClauseInfo;
-        EnclosingClauseInfo m_EnclosingClauseInfo;
-        EnclosingClauseInfo m_EnclosingClauseInfoForGCReporting;
-        bool m_fFixupCallerSPForGCReporting;
-
-    public:
-        // Save the state of the source exception tracker
-        void Save(const ExceptionTracker* pSourceTracker);
-        // Restore the state into the target exception tracker
-        void Restore(ExceptionTracker* pTargetTracker);
-    };
-
     PTR_ExceptionTracker    m_pPrevNestedInfo;
     Thread*                 m_pThread;          // this is used as an IsValid/IsFree field -- if it's NULL, the allocator can
                                                 // reuse its memory, if it's non-NULL, it better be a valid thread pointer
 
     StackRange              m_ScannedStackRange;
     DAC_EXCEPTION_POINTERS  m_ptrs;
+#ifdef FEATURE_PAL
+    BOOL                    m_fOwnsExceptionPointers;
+#endif
     OBJECTHANDLE            m_hThrowable;
     StackTraceInfo          m_StackTraceInfo;
     UINT_PTR                m_uCatchToCallPC;
@@ -741,10 +747,6 @@ private: ;
     DWORD                   m_ExceptionCode;
 
     PTR_Frame               m_pLimitFrame;
-    
-    // Thread Security State
-    HANDLE                  m_hCallerToken;
-    HANDLE                  m_hImpersonationToken;
 
 #ifdef DEBUGGING_SUPPORTED
     //
@@ -775,9 +777,7 @@ private: ;
     EnclosingClauseInfo     m_EnclosingClauseInfoOfCollapsedTracker;
 };
 
-#if defined(WIN64EXCEPTIONS)
 PTR_ExceptionTracker GetEHTrackerForPreallocatedException(OBJECTREF oPreAllocThrowable, PTR_ExceptionTracker pStartingEHTracker);
-#endif // WIN64EXCEPTIONS
 
 class TrackerAllocator
 {

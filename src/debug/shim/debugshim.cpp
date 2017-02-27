@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //*****************************************************************************
 // debugshim.cpp
 // 
@@ -84,10 +83,10 @@ STDMETHODIMP CLRDebuggingImpl::OpenVirtualProcess(
     HMODULE hDac = NULL;
     DWORD dbiTimestamp;
     DWORD dbiSizeOfImage;
-    WCHAR dbiName[MAX_PATH];
+    WCHAR dbiName[MAX_PATH_FNAME] = {0};
     DWORD dacTimestamp;
     DWORD dacSizeOfImage;
-    WCHAR dacName[MAX_PATH];
+    WCHAR dacName[MAX_PATH_FNAME] = {0};
     CLR_DEBUGGING_VERSION version;
     BOOL versionSupportedByCaller = FALSE;
     
@@ -126,11 +125,11 @@ STDMETHODIMP CLRDebuggingImpl::OpenVirtualProcess(
                             &dbiTimestamp,
                             &dbiSizeOfImage,
                             dbiName,
-                            MAX_PATH,
+                            MAX_PATH_FNAME,
                             &dacTimestamp,
                             &dacSizeOfImage,
                             dacName,
-                            MAX_PATH);
+                            MAX_PATH_FNAME);
         }
 
         // If we need to fetch either the process info or the flags info then we need to find

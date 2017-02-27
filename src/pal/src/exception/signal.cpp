@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*++
 
@@ -19,19 +18,24 @@ Abstract:
 
 --*/
 
+#include "pal/dbgmsg.h"
+SET_DEFAULT_DEBUG_CHANNEL(EXCEPT); // some headers have code with asserts, so do this first
+
 #include "pal/corunix.hpp"
 #include "pal/handleapi.hpp"
 #include "pal/thread.hpp"
 #include "pal/threadinfo.hpp"
 #include "pal/threadsusp.hpp"
 #include "pal/seh.hpp"
+#include "pal/signal.hpp"
 
 #include "pal/palinternal.h"
 #if !HAVE_MACH_EXCEPTIONS
-#include "pal/dbgmsg.h"
 #include "pal/init.h"
 #include "pal/process.h"
 #include "pal/debug.h"
+#include "pal/virtual.h"
+#include "pal/utils.h"
 
 #include <signal.h>
 #include <errno.h>
@@ -39,14 +43,19 @@ Abstract:
 #include <sys/ucontext.h>
 #include <sys/utsname.h>
 #include <unistd.h>
+#include <sys/mman.h>
 
 #include "pal/context.h"
 
 using namespace CorUnix;
 
-SET_DEFAULT_DEBUG_CHANNEL(EXCEPT);
-
+#ifdef SIGRTMIN
 #define INJECT_ACTIVATION_SIGNAL SIGRTMIN
+#endif
+
+#if !defined(INJECT_ACTIVATION_SIGNAL) && defined(FEATURE_HIJACK)
+#error FEATURE_HIJACK requires INJECT_ACTIVATION_SIGNAL to be defined
+#endif
 
 /* local type definitions *****************************************************/
 
@@ -58,6 +67,13 @@ typedef void *siginfo_t;
 #endif  /* !HAVE_SIGINFO_T */
 typedef void (*SIGFUNC)(int, siginfo_t *, void *);
 
+// Return context and status for the signal_handler_worker.
+struct SignalHandlerWorkerReturnPoint
+{
+    bool returnFromHandler;
+    CONTEXT context;
+};
+
 /* internal function declarations *********************************************/
 
 static void sigill_handler(int code, siginfo_t *siginfo, void *context);
@@ -67,17 +83,15 @@ static void sigtrap_handler(int code, siginfo_t *siginfo, void *context);
 static void sigbus_handler(int code, siginfo_t *siginfo, void *context);
 static void sigint_handler(int code, siginfo_t *siginfo, void *context);
 static void sigquit_handler(int code, siginfo_t *siginfo, void *context);
-#if USE_SIGNALS_FOR_THREAD_SUSPENSION
-void CorUnix::suspend_handler(int code, siginfo_t *siginfo, void *context);
-void CorUnix::resume_handler(int code, siginfo_t *siginfo, void *context);
-#endif // USE_SIGNALS_FOR_THREAD_SUSPENSION
+static void sigterm_handler(int code, siginfo_t *siginfo, void *context);
 
-static void common_signal_handler(PEXCEPTION_POINTERS pointers, int code, 
-                                  native_context_t *ucontext);
+static bool common_signal_handler(int code, siginfo_t *siginfo, void *sigcontext, int numParams, ...);
 
+#ifdef INJECT_ACTIVATION_SIGNAL
 static void inject_activation_handler(int code, siginfo_t *siginfo, void *context);
+#endif
 
-static void handle_signal(int signal_id, SIGFUNC sigfunc, struct sigaction *previousAction);
+static void handle_signal(int signal_id, SIGFUNC sigfunc, struct sigaction *previousAction, int additionalFlags = 0);
 static void restore_signal(int signal_id, struct sigaction *previousAction);
 
 /* internal data declarations *********************************************/
@@ -89,25 +103,25 @@ struct sigaction g_previous_sigbus;
 struct sigaction g_previous_sigsegv;
 struct sigaction g_previous_sigint;
 struct sigaction g_previous_sigquit;
+struct sigaction g_previous_sigterm;
 
-#if USE_SIGNALS_FOR_THREAD_SUSPENSION
-struct sigaction g_previous_sigusr1;
-struct sigaction g_previous_sigusr2;
-#endif // USE_SIGNALS_FOR_THREAD_SUSPENSION
+static bool registered_sigterm_handler = false;
 
-// Pipe used for sending SIGINT / SIGQUIT signals notifications to a helper thread
-// that invokes the actual handler.
-int g_signalPipe[2] = { 0, 0 };
+#ifdef INJECT_ACTIVATION_SIGNAL
+struct sigaction g_previous_activation;
+#endif
 
-DWORD g_dwExternalSignalHandlerThreadId = 0;
+// Offset of the local variable containing native context in the common_signal_handler function.
+// This offset is relative to the frame pointer.
+int g_common_signal_handler_context_locvar_offset = 0;
 
 /* public function definitions ************************************************/
 
 /*++
 Function :
-    SEHInitializeSignals
+    EnsureSignalAlternateStack
 
-    Set-up signal handlers to catch signals and translate them to exceptions
+    Ensure that alternate stack for signal handling is allocated for the current thread
 
 Parameters :
     None
@@ -115,11 +129,93 @@ Parameters :
 Return :
     TRUE in case of a success, FALSE otherwise
 --*/
-BOOL SEHInitializeSignals()
+BOOL EnsureSignalAlternateStack()
+{
+    stack_t oss;
+
+    // Query the current alternate signal stack
+    int st = sigaltstack(NULL, &oss);
+
+    if ((st == 0) && (oss.ss_flags == SS_DISABLE))
+    {
+        // There is no alternate stack for SIGSEGV handling installed yet so allocate one
+
+        // We include the size of the SignalHandlerWorkerReturnPoint in the alternate stack size since the 
+        // context contained in it is large and the SIGSTKSZ was not sufficient on ARM64 during testing.
+        int altStackSize = SIGSTKSZ + ALIGN_UP(sizeof(SignalHandlerWorkerReturnPoint), 16) + VIRTUAL_PAGE_SIZE;
+        void* altStack;
+        int st = posix_memalign(&altStack, VIRTUAL_PAGE_SIZE, altStackSize);
+        if (st == 0)
+        {
+            // create a guard page for the alternate stack
+            st = mprotect(altStack, VIRTUAL_PAGE_SIZE, PROT_NONE);
+            if (st == 0)
+            {
+                stack_t ss;
+                ss.ss_sp = (char*)altStack;
+                ss.ss_size = altStackSize;
+                ss.ss_flags = 0;
+                st = sigaltstack(&ss, NULL);
+                if (st != 0)
+                {
+                    // Installation of the alternate stack failed, so revert the guard page protection
+                    int st2 = mprotect(altStack, VIRTUAL_PAGE_SIZE, PROT_READ | PROT_WRITE);
+                    _ASSERTE(st2 == 0);
+                }
+            }
+
+            if (st != 0)
+            {
+                free(altStack);
+            }
+        }
+    }
+
+    return (st == 0);
+}
+
+/*++
+Function :
+    FreeSignalAlternateStack
+
+    Free alternate stack for signal handling
+
+Parameters :
+    None
+
+Return :
+    None
+--*/
+void FreeSignalAlternateStack()
+{
+    stack_t ss, oss;
+    ss.ss_flags = SS_DISABLE;
+    int st = sigaltstack(&ss, &oss);
+    if ((st == 0) && (oss.ss_flags != SS_DISABLE))
+    {
+        int st = mprotect(oss.ss_sp, VIRTUAL_PAGE_SIZE, PROT_READ | PROT_WRITE);
+        _ASSERTE(st == 0);
+        free(oss.ss_sp);
+    }
+}
+
+/*++
+Function :
+    SEHInitializeSignals
+
+    Set up signal handlers to catch signals and translate them to exceptions
+
+Parameters :
+    None
+
+Return :
+    TRUE in case of a success, FALSE otherwise
+--*/
+BOOL SEHInitializeSignals(DWORD flags)
 {
     TRACE("Initializing signal handlers\n");
 
-    /* we call handle signal for every possible signal, even
+    /* we call handle_signal for every possible signal, even
        if we don't provide a signal handler.
 
        handle_signal will set SA_RESTART flag for specified signal.
@@ -136,13 +232,25 @@ BOOL SEHInitializeSignals()
     handle_signal(SIGTRAP, sigtrap_handler, &g_previous_sigtrap);
     handle_signal(SIGFPE, sigfpe_handler, &g_previous_sigfpe);
     handle_signal(SIGBUS, sigbus_handler, &g_previous_sigbus);
-    handle_signal(SIGSEGV, sigsegv_handler, &g_previous_sigsegv);
-#if USE_SIGNALS_FOR_THREAD_SUSPENSION
-    handle_signal(SIGUSR1, suspend_handler, &g_previous_sigusr1);
-    handle_signal(SIGUSR2, resume_handler, &g_previous_sigusr2);
-#endif
+    // SIGSEGV handler runs on a separate stack so that we can handle stack overflow
+    handle_signal(SIGSEGV, sigsegv_handler, &g_previous_sigsegv, SA_ONSTACK);
+    handle_signal(SIGINT, sigint_handler, &g_previous_sigint);
+    handle_signal(SIGQUIT, sigquit_handler, &g_previous_sigquit);
 
-    handle_signal(INJECT_ACTIVATION_SIGNAL, inject_activation_handler, NULL);
+    if (!EnsureSignalAlternateStack())
+    {
+        return FALSE;
+    }
+
+    if (flags & PAL_INITIALIZE_REGISTER_SIGTERM_HANDLER)
+    {
+        handle_signal(SIGTERM, sigterm_handler, &g_previous_sigterm);
+        registered_sigterm_handler = true;
+    }
+
+#ifdef INJECT_ACTIVATION_SIGNAL
+    handle_signal(INJECT_ACTIVATION_SIGNAL, inject_activation_handler, &g_previous_activation);
+#endif
 
     /* The default action for SIGPIPE is process termination.
        Since SIGPIPE can be signaled when trying to write on a socket for which
@@ -171,72 +279,31 @@ Parameters :
 note :
 reason for this function is that during PAL_Terminate, we reach a point where 
 SEH isn't possible anymore (handle manager is off, etc). Past that point, 
-we can't avoid crashing on a signal     
+we can't avoid crashing on a signal.
 --*/
 void SEHCleanupSignals()
 {
     TRACE("Restoring default signal handlers\n");
 
-    // Do not remove handlers for SIGUSR1 and SIGUSR2. They must remain so threads can be suspended
-    // during cleanup after this function has been called.
     restore_signal(SIGILL, &g_previous_sigill);
     restore_signal(SIGTRAP, &g_previous_sigtrap);
     restore_signal(SIGFPE, &g_previous_sigfpe);
     restore_signal(SIGBUS, &g_previous_sigbus);
     restore_signal(SIGSEGV, &g_previous_sigsegv);
+    restore_signal(SIGINT, &g_previous_sigint);
+    restore_signal(SIGQUIT, &g_previous_sigquit);
 
-    // Only restore these signals if the signal handler thread was started and
-    // the previous handlers saved.
-    if (g_dwExternalSignalHandlerThreadId != 0)
+    if (registered_sigterm_handler)
     {
-        restore_signal(SIGINT, &g_previous_sigint);
-        restore_signal(SIGQUIT, &g_previous_sigquit);
+        restore_signal(SIGTERM, &g_previous_sigterm);
     }
+
+#ifdef INJECT_ACTIVATION_SIGNAL
+    restore_signal(INJECT_ACTIVATION_SIGNAL, &g_previous_activation);
+#endif
 }
 
 /* internal function definitions **********************************************/
-
-#if USE_SIGNALS_FOR_THREAD_SUSPENSION
-
-void CorUnix::suspend_handler(int code, siginfo_t *siginfo, void *context)
-{
-    if (PALIsInitialized())
-    {
-        CPalThread *pThread = InternalGetCurrentThread();
-        if (pThread->suspensionInfo.HandleSuspendSignal(pThread)) 
-        {
-            return;
-        }
-    }
-    
-    TRACE("SIGUSR1 signal was unhandled; chaining to previous sigaction\n");
-
-    if (g_previous_sigusr1.sa_sigaction != NULL)
-    {
-        g_previous_sigusr1.sa_sigaction(code, siginfo, context);
-    }
-}
-
-void CorUnix::resume_handler(int code, siginfo_t *siginfo, void *context)
-{
-    if (PALIsInitialized())
-    {
-        CPalThread *pThread = InternalGetCurrentThread();
-        if (pThread->suspensionInfo.HandleResumeSignal()) 
-        {
-            return;
-        }
-    }
-
-    TRACE("SIGUSR2 signal was unhandled; chaining to previous sigaction\n");
-
-    if (g_previous_sigusr2.sa_sigaction != NULL)
-    {
-        g_previous_sigusr2.sa_sigaction(code, siginfo, context);
-    }
-}
-
-#endif // USE_SIGNALS_FOR_THREAD_SUSPENSION
 
 /*++
 Function :
@@ -253,24 +320,11 @@ static void sigill_handler(int code, siginfo_t *siginfo, void *context)
 {
     if (PALIsInitialized())
     {
-        EXCEPTION_RECORD record;
-        EXCEPTION_POINTERS pointers;
-        native_context_t *ucontext;
-
-        ucontext = (native_context_t *)context;
-
-        record.ExceptionCode = CONTEXTGetExceptionCodeForSignal(siginfo, ucontext);
-        record.ExceptionFlags = EXCEPTION_IS_SIGNAL;
-        record.ExceptionRecord = NULL;
-        record.ExceptionAddress = CONTEXTGetPC(ucontext);
-        record.NumberParameters = 0;
-
-        pointers.ExceptionRecord = &record;
-
-        common_signal_handler(&pointers, code, ucontext);
+        if (common_signal_handler(code, siginfo, context, 0))
+        {
+            return;
+        }
     }
-
-    TRACE("SIGILL signal was unhandled; chaining to previous sigaction\n");
 
     if (g_previous_sigill.sa_sigaction != NULL)
     {
@@ -281,6 +335,8 @@ static void sigill_handler(int code, siginfo_t *siginfo, void *context)
         // Restore the original or default handler and restart h/w exception
         restore_signal(code, &g_previous_sigill);
     }
+
+    PROCNotifyProcessShutdown();
 }
 
 /*++
@@ -298,24 +354,11 @@ static void sigfpe_handler(int code, siginfo_t *siginfo, void *context)
 {
     if (PALIsInitialized())
     {
-        EXCEPTION_RECORD record;
-        EXCEPTION_POINTERS pointers;
-        native_context_t *ucontext;
-
-        ucontext = (native_context_t *)context;
-
-        record.ExceptionCode = CONTEXTGetExceptionCodeForSignal(siginfo, ucontext);
-        record.ExceptionFlags = EXCEPTION_IS_SIGNAL;
-        record.ExceptionRecord = NULL;
-        record.ExceptionAddress = CONTEXTGetPC(ucontext);
-        record.NumberParameters = 0;
-
-        pointers.ExceptionRecord = &record;
-
-        common_signal_handler(&pointers, code, ucontext);
+        if (common_signal_handler(code, siginfo, context, 0))
+        {
+            return;
+        }
     }
-
-    TRACE("SIGFPE signal was unhandled; chaining to previous sigaction\n");
 
     if (g_previous_sigfpe.sa_sigaction != NULL)
     {
@@ -326,6 +369,30 @@ static void sigfpe_handler(int code, siginfo_t *siginfo, void *context)
         // Restore the original or default handler and restart h/w exception
         restore_signal(code, &g_previous_sigfpe);
     }
+
+    PROCNotifyProcessShutdown();
+}
+
+/*++
+Function :
+    signal_handler_worker
+
+    Handles signal on the original stack where the signal occured. 
+    Invoked via setcontext.
+
+Parameters :
+    POSIX signal handler parameter list ("man sigaction" for details)
+    returnPoint - context to which the function returns if the common_signal_handler returns
+
+    (no return value)
+--*/
+extern "C" void signal_handler_worker(int code, siginfo_t *siginfo, void *context, SignalHandlerWorkerReturnPoint* returnPoint)
+{
+    // TODO: First variable parameter says whether a read (0) or write (non-0) caused the
+    // fault. We must disassemble the instruction at record.ExceptionAddress
+    // to correctly fill in this value.
+    returnPoint->returnFromHandler = common_signal_handler(code, siginfo, context, 2, (size_t)0, (size_t)siginfo->si_addr);
+    RtlRestoreContext(&returnPoint->context, NULL);
 }
 
 /*++
@@ -343,32 +410,42 @@ static void sigsegv_handler(int code, siginfo_t *siginfo, void *context)
 {
     if (PALIsInitialized())
     {
-        EXCEPTION_RECORD record;
-        EXCEPTION_POINTERS pointers;
-        native_context_t *ucontext;
+        // First check if we have a stack overflow
+        size_t sp = (size_t)GetNativeContextSP((native_context_t *)context);
+        size_t failureAddress = (size_t)siginfo->si_addr;
 
-        ucontext = (native_context_t *)context;
+        // If the failure address is at most one page above or below the stack pointer, 
+        // we have a stack overflow. 
+        if ((failureAddress - (sp - VIRTUAL_PAGE_SIZE)) < 2 * VIRTUAL_PAGE_SIZE)
+        {
+            (void)write(STDERR_FILENO, StackOverflowMessage, sizeof(StackOverflowMessage) - 1);
+            PROCAbort();
+        }
 
-        record.ExceptionCode = CONTEXTGetExceptionCodeForSignal(siginfo, ucontext);
-        record.ExceptionFlags = EXCEPTION_IS_SIGNAL;
-        record.ExceptionRecord = NULL;
-        record.ExceptionAddress = CONTEXTGetPC(ucontext);
-        record.NumberParameters = 2;
+        // Now that we know the SIGSEGV didn't happen due to a stack overflow, execute the common
+        // hardware signal handler on the original stack.
 
-        // TODO: First parameter says whether a read (0) or write (non-0) caused the
-        // fault. We must disassemble the instruction at record.ExceptionAddress
-        // to correctly fill in this value.
-        record.ExceptionInformation[0] = 0;
+        // Establish a return point in case the common_signal_handler returns
 
-        // Second parameter is the address that caused the fault.
-        record.ExceptionInformation[1] = (size_t)siginfo->si_addr;
+        volatile bool contextInitialization = true;
 
-        pointers.ExceptionRecord = &record;
+        SignalHandlerWorkerReturnPoint returnPoint;
+        RtlCaptureContext(&returnPoint.context);
 
-        common_signal_handler(&pointers, code, ucontext);
+        // When the signal handler worker completes, it uses setcontext to return to this point
+
+        if (contextInitialization)
+        {
+            contextInitialization = false;
+            ExecuteHandlerOnOriginalStack(code, siginfo, context, &returnPoint);
+            _ASSERTE(FALSE); // The ExecuteHandlerOnOriginalStack should never return
+        }
+        
+        if (returnPoint.returnFromHandler)
+        {
+            return;
+        }
     }
-
-    TRACE("SIGSEGV signal was unhandled; chaining to previous sigaction\n");
 
     if (g_previous_sigsegv.sa_sigaction != NULL)
     {
@@ -379,6 +456,8 @@ static void sigsegv_handler(int code, siginfo_t *siginfo, void *context)
         // Restore the original or default handler and restart h/w exception
         restore_signal(code, &g_previous_sigsegv);
     }
+
+    PROCNotifyProcessShutdown();
 }
 
 /*++
@@ -396,24 +475,11 @@ static void sigtrap_handler(int code, siginfo_t *siginfo, void *context)
 {
     if (PALIsInitialized())
     {
-        EXCEPTION_RECORD record;
-        EXCEPTION_POINTERS pointers;
-        native_context_t *ucontext;
-
-        ucontext = (native_context_t *)context;
-
-        record.ExceptionCode = CONTEXTGetExceptionCodeForSignal(siginfo, ucontext);
-        record.ExceptionFlags = EXCEPTION_IS_SIGNAL;
-        record.ExceptionRecord = NULL;
-        record.ExceptionAddress = CONTEXTGetPC(ucontext);
-        record.NumberParameters = 0;
-
-        pointers.ExceptionRecord = &record;
-
-        common_signal_handler(&pointers, code, ucontext);
+        if (common_signal_handler(code, siginfo, context, 0))
+        {
+            return;
+        }
     }
-
-    TRACE("SIGTRAP signal was unhandled; chaining to previous sigaction\n");
 
     if (g_previous_sigtrap.sa_sigaction != NULL)
     {
@@ -423,93 +489,10 @@ static void sigtrap_handler(int code, siginfo_t *siginfo, void *context)
     {
         // We abort instead of restore the original or default handler and returning
         // because returning from a SIGTRAP handler continues execution past the trap.
-        abort();
+        PROCAbort();
     }
-}
 
-/*++
-Function :
-    HandleExternalSignal
-
-    Handle the SIGINT and SIGQUIT signals.
-
-
-Parameters :
-    signalCode - code of the external signal
-
-    (no return value)
---*/
-static void HandleExternalSignal(int signalCode)
-{
-    BYTE signalCodeByte = (BYTE)signalCode;
-    ssize_t writtenBytes;
-    do
-    {
-        writtenBytes = write(g_signalPipe[1], &signalCodeByte, 1);
-    }
-    while ((writtenBytes == -1) && (errno == EINTR));
-
-    if (writtenBytes == -1)
-    {
-        // Fatal error
-        abort();
-    }
-}
-
-/*++
-Function :
-    sigint_handler
-
-    handle SIGINT signal
-
-Parameters :
-    POSIX signal handler parameter list ("man sigaction" for details)
-
-    (no return value)
---*/
-static void sigint_handler(int code, siginfo_t *siginfo, void *context)
-{
-    if (PALIsInitialized())
-    {
-        HandleExternalSignal(code);
-    }
-    else 
-    {
-        TRACE("SIGINT signal was unhandled; chaining to previous sigaction\n");
-
-        if (g_previous_sigint.sa_sigaction != NULL)
-        {
-            g_previous_sigint.sa_sigaction(code, siginfo, context);
-        }
-    }
-}
-
-/*++
-Function :
-    sigquit_handler
-
-    handle SIGQUIT signal
-
-Parameters :
-    POSIX signal handler parameter list ("man sigaction" for details)
-
-    (no return value)
---*/
-static void sigquit_handler(int code, siginfo_t *siginfo, void *context)
-{
-    if (PALIsInitialized())
-    {
-        HandleExternalSignal(code);
-    }
-    else 
-    {
-        TRACE("SIGQUIT signal was unhandled; chaining to previous sigaction\n");
-
-        if (g_previous_sigquit.sa_sigaction != NULL)
-        {
-            g_previous_sigquit.sa_sigaction(code, siginfo, context);
-        }
-    }
+    PROCNotifyProcessShutdown();
 }
 
 /*++
@@ -527,32 +510,14 @@ static void sigbus_handler(int code, siginfo_t *siginfo, void *context)
 {
     if (PALIsInitialized())
     {
-        EXCEPTION_RECORD record;
-        EXCEPTION_POINTERS pointers;
-        native_context_t *ucontext;
-
-        ucontext = (native_context_t *)context;
-
-        record.ExceptionCode = CONTEXTGetExceptionCodeForSignal(siginfo, ucontext);
-        record.ExceptionFlags = EXCEPTION_IS_SIGNAL;
-        record.ExceptionRecord = NULL;
-        record.ExceptionAddress = CONTEXTGetPC(ucontext);
-        record.NumberParameters = 2;
-
-        // TODO: First parameter says whether a read (0) or write (non-0) caused the
+        // TODO: First variable parameter says whether a read (0) or write (non-0) caused the
         // fault. We must disassemble the instruction at record.ExceptionAddress
         // to correctly fill in this value.
-        record.ExceptionInformation[0] = 0;
-
-        // Second parameter is the address that caused the fault.
-        record.ExceptionInformation[1] = (size_t)siginfo->si_addr;
-
-        pointers.ExceptionRecord = &record;
-
-        common_signal_handler(&pointers, code, ucontext);
+        if (common_signal_handler(code, siginfo, context, 2, (size_t)0, (size_t)siginfo->si_addr))
+        {
+            return;
+        }
     }
-
-    TRACE("SIGBUS signal was unhandled; chaining to previous sigaction\n");
 
     if (g_previous_sigbus.sa_sigaction != NULL)
     {
@@ -563,8 +528,80 @@ static void sigbus_handler(int code, siginfo_t *siginfo, void *context)
         // Restore the original or default handler and restart h/w exception
         restore_signal(code, &g_previous_sigbus);
     }
+
+    PROCNotifyProcessShutdown();
 }
 
+/*++
+Function :
+    sigint_handler
+
+    handle SIGINT signal
+
+Parameters :
+    POSIX signal handler parameter list ("man sigaction" for details)
+
+    (no return value)
+--*/
+static void sigint_handler(int code, siginfo_t *siginfo, void *context)
+{
+    PROCNotifyProcessShutdown();
+
+    // Restore the original or default handler and resend signal
+    restore_signal(code, &g_previous_sigint);
+    kill(gPID, code);
+}
+
+/*++
+Function :
+    sigquit_handler
+
+    handle SIGQUIT signal
+
+Parameters :
+    POSIX signal handler parameter list ("man sigaction" for details)
+
+    (no return value)
+--*/
+static void sigquit_handler(int code, siginfo_t *siginfo, void *context)
+{
+    PROCNotifyProcessShutdown();
+
+    // Restore the original or default handler and resend signal
+    restore_signal(code, &g_previous_sigquit);
+    kill(gPID, code);
+}
+
+/*++
+Function :
+    sigterm_handler
+
+    handle SIGTERM signal
+
+Parameters :
+    POSIX signal handler parameter list ("man sigaction" for details)
+
+    (no return value)
+--*/
+static void sigterm_handler(int code, siginfo_t *siginfo, void *context)
+{
+    if (PALIsInitialized())
+    {
+        // g_pSynchronizationManager shouldn't be null if PAL is initialized.
+        _ASSERTE(g_pSynchronizationManager != nullptr);
+
+        g_pSynchronizationManager->SendTerminationRequestToWorkerThread();
+    }
+    else
+    {
+        if (g_previous_sigterm.sa_sigaction != NULL)
+        {
+            g_previous_sigterm.sa_sigaction(code, siginfo, context);
+        }
+    }
+}
+
+#ifdef INJECT_ACTIVATION_SIGNAL
 /*++
 Function :
     inject_activation_handler
@@ -580,26 +617,31 @@ Parameters :
 static void inject_activation_handler(int code, siginfo_t *siginfo, void *context)
 {
     // Only accept activations from the current process
-    if (siginfo->si_pid == getpid())
+    if (g_activationFunction != NULL && siginfo->si_pid == getpid())
     {
-        PAL_ActivationFunction activation = (PAL_ActivationFunction)siginfo->si_value.sival_ptr;
-        if (activation != NULL)
+        _ASSERTE(g_safeActivationCheckFunction != NULL);
+
+        native_context_t *ucontext = (native_context_t *)context;
+
+        CONTEXT winContext;
+        CONTEXTFromNativeContext(
+            ucontext, 
+            &winContext, 
+            CONTEXT_CONTROL | CONTEXT_INTEGER | CONTEXT_FLOATING_POINT);
+
+        if (g_safeActivationCheckFunction(CONTEXTGetPC(&winContext), /* checkingCurrentThread */ TRUE))
         {
-            native_context_t *ucontext = (native_context_t *)context;
-
-            CONTEXT winContext;
-            CONTEXTFromNativeContext(
-                ucontext, 
-                &winContext, 
-                CONTEXT_CONTROL | CONTEXT_INTEGER | CONTEXT_FLOATING_POINT);
-
-            activation(&winContext);
-
+            g_activationFunction(&winContext);
             // Activation function may have modified the context, so update it.
             CONTEXTToNativeContext(&winContext, ucontext);
         }
     }
+    else if (g_previous_activation.sa_sigaction != NULL)
+    {
+        g_previous_activation.sa_sigaction(code, siginfo, context);
+    }
 }
+#endif
 
 /*++
 Function :
@@ -613,79 +655,22 @@ Parameters :
 
 (no return value)
 --*/
-void InjectActivationInternal(CorUnix::CPalThread* pThread, PAL_ActivationFunction activationFunction)
+PAL_ERROR InjectActivationInternal(CorUnix::CPalThread* pThread)
 {
-#if HAVE_PTHREAD_SIGQUEUE
-    sigval value;
-    value.sival_ptr = (void*)activationFunction;
-    int status = pthread_sigqueue(pThread->GetPThreadSelf(), INJECT_ACTIVATION_SIGNAL, value);
+#ifdef INJECT_ACTIVATION_SIGNAL
+    int status = pthread_kill(pThread->GetPThreadSelf(), INJECT_ACTIVATION_SIGNAL);
     if (status != 0)
     {
         // Failure to send the signal is fatal. There are only two cases when sending
         // the signal can fail. First, if the signal ID is invalid and second, 
         // if the thread doesn't exist anymore.
-        abort();
+        PROCAbort();
     }
+
+    return NO_ERROR;
 #else
-    ASSERT("InjectActivationInternal not yet implemented on this platform!");
+    return ERROR_CANCELLED;
 #endif
-}
-
-/*++
-Function:
-PAL_InjectActivation
-
-Interrupt the specified thread and have it call the activation function passed in
-
-Parameters:
-hThread            - handle of the target thread
-activationFunction - function to call 
-
-Return: 
-TRUE if it succeeded, FALSE otherwise.
---*/
-BOOL
-PALAPI
-PAL_InjectActivation(
-    IN HANDLE hThread,
-    IN PAL_ActivationFunction pActivationFunction)
-{
-    PERF_ENTRY(PAL_InjectActivation);
-    ENTRY("PAL_InjectActivation(hThread=%p, pActivationFunction=%p)\n", hThread, pActivationFunction);
-
-    CPalThread *pCurrentThread;
-    CPalThread *pTargetThread;
-    IPalObject *pobjThread = NULL;
-
-    pCurrentThread = InternalGetCurrentThread();
-
-    PAL_ERROR palError = InternalGetThreadDataFromHandle(
-        pCurrentThread,
-        hThread,
-        0,
-        &pTargetThread,
-        &pobjThread
-        );
-
-    if (palError == NO_ERROR)
-    {
-        InjectActivationInternal(pTargetThread, pActivationFunction);
-    }
-    else
-    {
-        pCurrentThread->SetLastError(palError);
-    }
-
-    if (pobjThread != NULL)
-    {
-        pobjThread->ReleaseReference(pCurrentThread);
-    }
-
-    BOOL success = (palError == NO_ERROR);
-    LOGEXIT("PAL_InjectActivation returns:d\n", success);
-    PERF_EXIT(PAL_InjectActivation);
-
-    return success;
 }
 
 /*++
@@ -739,41 +724,80 @@ Function :
     common code for all signal handlers
 
 Parameters :
-    PEXCEPTION_POINTERS pointers : exception information
-    native_context_t *ucontext : context structure given to signal handler
     int code : signal received
+    siginfo_t *siginfo : siginfo passed to the signal handler
+    void *context : context structure passed to the signal handler
+    int numParams : number of variable parameters of the exception
+    ... : variable parameters of the exception (each of size_t type)
 
-    (no return value)
+    Returns true if the execution should continue or false if the exception was unhandled
 Note:
-    the "pointers" parameter should contain a valid exception record pointer, 
-    but the contextrecord pointer will be overwritten.    
+    the "pointers" parameter should contain a valid exception record pointer,
+    but the ContextRecord pointer will be overwritten.
 --*/
-static void common_signal_handler(PEXCEPTION_POINTERS pointers, int code, 
-                                  native_context_t *ucontext)
+__attribute__((noinline))
+static bool common_signal_handler(int code, siginfo_t *siginfo, void *sigcontext, int numParams, ...)
 {
     sigset_t signal_set;
-    CONTEXT context;
+    CONTEXT *contextRecord;
+    EXCEPTION_RECORD *exceptionRecord;
+    native_context_t *ucontext;
+
+    ucontext = (native_context_t *)sigcontext;
+    g_common_signal_handler_context_locvar_offset = (int)((char*)&ucontext - (char*)__builtin_frame_address(0));
+
+    AllocateExceptionRecords(&exceptionRecord, &contextRecord);
+
+    exceptionRecord->ExceptionCode = CONTEXTGetExceptionCodeForSignal(siginfo, ucontext);
+    exceptionRecord->ExceptionFlags = EXCEPTION_IS_SIGNAL;
+    exceptionRecord->ExceptionRecord = NULL;
+    exceptionRecord->ExceptionAddress = GetNativeContextPC(ucontext);
+    exceptionRecord->NumberParameters = numParams;
+
+    va_list params;
+    va_start(params, numParams);
+
+    for (int i = 0; i < numParams; i++)
+    {
+        exceptionRecord->ExceptionInformation[i] = va_arg(params, size_t);
+    }
 
     // Pre-populate context with data from current frame, because ucontext doesn't have some data (e.g. SS register)
     // which is required for restoring context
-    RtlCaptureContext(&context);
+    RtlCaptureContext(contextRecord);
 
-    // Fill context record with required information. from pal.h :
+    ULONG contextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER | CONTEXT_FLOATING_POINT;
+
+#if defined(_AMD64_)
+    contextFlags |= CONTEXT_XSTATE;
+#endif
+
+    // Fill context record with required information. from pal.h:
     // On non-Win32 platforms, the CONTEXT pointer in the
     // PEXCEPTION_POINTERS will contain at least the CONTEXT_CONTROL registers.
-    CONTEXTFromNativeContext(ucontext, &context, CONTEXT_CONTROL | CONTEXT_INTEGER);
-
-    pointers->ContextRecord = &context;
+    CONTEXTFromNativeContext(ucontext, contextRecord, contextFlags);
 
     /* Unmask signal so we can receive it again */
     sigemptyset(&signal_set);
     sigaddset(&signal_set, code);
-    if(-1 == sigprocmask(SIG_UNBLOCK, &signal_set, NULL))
+    int sigmaskRet = pthread_sigmask(SIG_UNBLOCK, &signal_set, NULL);
+    if (sigmaskRet != 0)
     {
-        ASSERT("sigprocmask failed; error is %d (%s)\n", errno, strerror(errno));
-    } 
+        ASSERT("pthread_sigmask failed; error number is %d\n", sigmaskRet);
+    }
 
-    SEHProcessException(pointers);
+    contextRecord->ContextFlags |= CONTEXT_EXCEPTION_ACTIVE;
+    // The exception object takes ownership of the exceptionRecord and contextRecord
+    PAL_SEHException exception(exceptionRecord, contextRecord);
+
+    if (SEHProcessException(&exception))
+    {
+        // Exception handling may have modified the context, so update it.
+        CONTEXTToNativeContext(contextRecord, ucontext);
+        return true;
+    }
+
+    return false;
 }
 
 /*++
@@ -791,11 +815,11 @@ Parameters :
     
 note : if sigfunc is NULL, the default signal handler is restored    
 --*/
-void handle_signal(int signal_id, SIGFUNC sigfunc, struct sigaction *previousAction)
+void handle_signal(int signal_id, SIGFUNC sigfunc, struct sigaction *previousAction, int additionalFlags)
 {
     struct sigaction newAction;
 
-    newAction.sa_flags = SA_RESTART;
+    newAction.sa_flags = SA_RESTART | additionalFlags;
 #if HAVE_SIGINFO_T
     newAction.sa_handler = NULL;
     newAction.sa_sigaction = sigfunc;
@@ -831,182 +855,6 @@ void restore_signal(int signal_id, struct sigaction *previousAction)
         ASSERT("restore_signal: sigaction() call failed with error code %d (%s)\n",
             errno, strerror(errno));
     }
-}
-
-static
-DWORD
-PALAPI
-ExternalSignalHandlerThreadRoutine(
-    PVOID
-    );
-
-static
-DWORD
-PALAPI
-ControlHandlerThreadRoutine(
-    PVOID pvSignal
-    );
-
-PAL_ERROR
-StartExternalSignalHandlerThread(
-    CPalThread *pthr)
-{
-    PAL_ERROR palError = NO_ERROR;
-    
-#ifndef DO_NOT_USE_SIGNAL_HANDLING_THREAD
-    HANDLE hThread;
-
-    if (pipe(g_signalPipe) != 0)
-    {
-        palError = ERROR_CANNOT_MAKE;
-        goto done;
-    }
-
-    palError = InternalCreateThread(
-        pthr,
-        NULL,
-        0,
-        ExternalSignalHandlerThreadRoutine,
-        NULL,
-        0,
-        SignalHandlerThread, // Want no_suspend variant
-        &g_dwExternalSignalHandlerThreadId,
-        &hThread
-        );
-
-    if (NO_ERROR != palError)
-    {
-        ERROR("Failure creating external signal handler thread (%d)\n", palError);
-        goto done;
-    }
-
-    InternalCloseHandle(pthr, hThread);
-
-    handle_signal(SIGINT, sigint_handler, &g_previous_sigint);
-    handle_signal(SIGQUIT, sigquit_handler, &g_previous_sigquit);
-#endif // DO_NOT_USE_SIGNAL_HANDLING_THREAD
-
-done:
-
-    return palError;        
-}
-
-static
-DWORD
-PALAPI
-ExternalSignalHandlerThreadRoutine(
-    PVOID
-    )
-{
-    DWORD dwThreadId;
-    bool fContinue = TRUE;
-    HANDLE hThread;
-    PAL_ERROR palError = NO_ERROR;
-    CPalThread *pthr = InternalGetCurrentThread();
-
-    //
-    // Wait for a signal to occur
-    //
-
-    while (fContinue)
-    {
-        BYTE signalCode;
-        ssize_t bytesRead;
-
-        do
-        {
-            bytesRead = read(g_signalPipe[0], &signalCode, 1);
-        }
-        while ((bytesRead == -1) && (errno == EINTR));
-
-        if (bytesRead == -1)
-        {
-            // Fatal error 
-            abort();
-        }
-
-        switch (signalCode)
-        {
-            case SIGINT:
-            case SIGQUIT:
-            {
-                //
-                // Spin up a new thread to run the console handlers. We want
-                // to do this even if no handlers are installed, as in that
-                // case we want to do a normal shutdown from the new thread
-                // while still having this thread available to handle any
-                // other incoming signals.
-                //
-                // The new thread is always spawned, even if there are already
-                // currently console handlers running; this follows the
-                // Windows behavior. Yes, this means that poorly written
-                // console handler routines can make it impossible to kill
-                // a process using Ctrl-C or Ctrl-Break. "kill -9" is
-                // your friend.
-                //
-                // This thread must not be marked as a PalWorkerThread --
-                // since it may run user code it needs to make
-                // DLL_THREAD_ATTACH notifications.
-                //
-
-                PVOID pvCtrlCode = UintToPtr(
-                    SIGINT == signalCode ? CTRL_C_EVENT : CTRL_BREAK_EVENT
-                    );
-
-                palError = InternalCreateThread(
-                    pthr,
-                    NULL,
-                    0,
-                    ControlHandlerThreadRoutine,
-                    pvCtrlCode,
-                    0,
-                    UserCreatedThread,
-                    &dwThreadId,
-                    &hThread
-                    );
-
-                if (NO_ERROR != palError)
-                {
-                    if (!PALIsShuttingDown())
-                    {
-                        // If PAL is not shutting down, failure to create a thread is 
-                        // a fatal error.
-                        abort();
-                    }
-                    fContinue = FALSE;
-                    break;
-                }
-
-                InternalCloseHandle(pthr, hThread);                
-                break;
-            }
-
-            default:
-                ASSERT("Unexpected signal %d in signal thread\n", signalCode);
-                abort();
-                break;
-        }
-    }
-
-    //
-    // Perform an immediate (non-graceful) shutdown
-    //
-
-    _exit(EXIT_FAILURE);    
-
-    return 0;
-}
-
-static
-DWORD
-PALAPI
-ControlHandlerThreadRoutine(
-    PVOID pvSignal
-    )
-{
-    // Uint and DWORD are implicitly the same.
-    SEHHandleControlEvent(PtrToUint(pvSignal), NULL);
-    return 0;
 }
 
 #endif // !HAVE_MACH_EXCEPTIONS

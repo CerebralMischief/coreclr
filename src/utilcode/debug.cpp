@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //*****************************************************************************
 // Debug.cpp
 //
@@ -75,16 +74,6 @@ BOOL ContinueOnAssert()
 
     static ConfigDWORD fNoGui;
     return fNoGui.val(CLRConfig::INTERNAL_ContinueOnAssert);
-}
-
-BOOL NoGuiOnAssert()
-{
-    STATIC_CONTRACT_NOTHROW;
-    STATIC_CONTRACT_GC_NOTRIGGER;
-    STATIC_CONTRACT_DEBUG_ONLY;
-
-    static ConfigDWORD fNoGui;
-    return fNoGui.val(CLRConfig::INTERNAL_NoGuiOnAssert);
 }
 
 void DoRaiseExceptionOnAssert(DWORD chance)
@@ -240,8 +229,8 @@ VOID LogAssert(
     GetSystemTime(&st);
 #endif
 
-    WCHAR exename[300];
-    WszGetModuleFileName(NULL, exename, sizeof(exename)/sizeof(WCHAR));
+    PathString exename;
+    WszGetModuleFileName(NULL, exename);
 
     LOG((LF_ASSERT,
          LL_FATALERROR,
@@ -260,7 +249,7 @@ VOID LogAssert(
          szFile,
          iLine,
          szExpr));
-    LOG((LF_ASSERT, LL_FATALERROR, "RUNNING EXE: %ws\n", exename));
+    LOG((LF_ASSERT, LL_FATALERROR, "RUNNING EXE: %ws\n", exename.GetUnicode()));
 }
 
 //*****************************************************************************
@@ -349,13 +338,6 @@ bool _DbgBreakCheck(
     STATIC_CONTRACT_GC_NOTRIGGER;
     STATIC_CONTRACT_FORBID_FAULT;
     STATIC_CONTRACT_DEBUG_ONLY;
-
-    RaiseExceptionOnAssert(rTestAndRaise);
-
-    if (DebugBreakOnAssert())
-    {
-        DebugBreak();
-    }
 
     DBGIGNORE* pDBGIFNORE = GetDBGIGNORE();
     _DBGIGNOREDATA *psData;
@@ -490,6 +472,11 @@ bool _DbgBreakCheck(
 
     switch(ret)
     {
+    case 0:
+#if 0
+        // The message box was not displayed. Tell caller to break.
+        return true;
+#endif
     // For abort, just quit the app.
     case IDABORT:
         TerminateProcess(GetCurrentProcess(), 1);
@@ -538,10 +525,6 @@ bool _DbgBreakCheck(
         psData->iLine = iLine;
         strcpy(psData->rcFile, szFile);
         break;
-
-    case 0:
-        // The message box was not displayed. Tell caller to break.
-        return true;
     }
 
     return false;
@@ -557,13 +540,6 @@ bool _DbgBreakCheckNoThrow(
     STATIC_CONTRACT_GC_NOTRIGGER;
     STATIC_CONTRACT_FORBID_FAULT;
     STATIC_CONTRACT_DEBUG_ONLY;
-
-    RaiseExceptionOnAssert(rTestAndRaise);
-
-    if (DebugBreakOnAssert())
-    {
-        DebugBreak();
-    }
 
     bool failed = false;
     bool result = false;
@@ -583,7 +559,7 @@ bool _DbgBreakCheckNoThrow(
     }
     return result;
 }
-    
+
 #ifndef FEATURE_PAL
 // Get the timestamp from the PE file header.  This is useful
 unsigned DbgGetEXETimeStamp()
@@ -610,58 +586,6 @@ unsigned DbgGetEXETimeStamp()
     return cache;
 }
 #endif // FEATURE_PAL
-// // //
-// // //  The following function
-// // //  computes the binomial distribution, with which to compare
-// // //  hash-table statistics.  If a hash function perfectly randomizes
-// // //  its input, one would expect to see F chains of length K, in a
-// // //  table with N buckets and M elements, where F is
-// // //
-// // //    F(K,M,N) = N * (M choose K) * (1 - 1/N)^(M-K) * (1/N)^K.
-// // //
-// // //  Don't call this with a K larger than 159.
-// // //
-
-#if !defined(NO_CRT)
-
-#include <math.h>
-
-#define MAX_BUCKETS_MATH 160
-
-double Binomial (DWORD K, DWORD M, DWORD N)
-{
-    STATIC_CONTRACT_LEAF;
-    
-    if (K >= MAX_BUCKETS_MATH)
-        return -1 ;
-
-    static double rgKFact [MAX_BUCKETS_MATH] ;
-    DWORD i ;
-
-    if (rgKFact[0] == 0)
-    {
-        rgKFact[0] = 1 ;
-        for (i=1; i<MAX_BUCKETS_MATH; i++)
-            rgKFact[i] = rgKFact[i-1] * i ;
-    }
-
-    double MchooseK = 1 ;
-
-    for (i = 0; i < K; i++)
-        MchooseK *= (M - i) ;
-
-    MchooseK /= rgKFact[K] ;
-
-    double OneOverNToTheK = pow (1./N, K) ;
-
-    double QToTheMMinusK = pow (1.-1./N, M-K) ;
-
-    double P = MchooseK * OneOverNToTheK * QToTheMMinusK ;
-
-    return N * P ;
-}
-
-#endif // !NO_CRT
 
 // Called from within the IfFail...() macros.  Set a breakpoint here to break on
 // errors.
@@ -671,7 +595,6 @@ VOID DebBreak()
   static int i = 0;  // add some code here so that we'll be able to set a BP
   i++;
 }
-
 
 VOID DebBreakHr(HRESULT hr)
 {
@@ -759,11 +682,6 @@ VOID DbgAssertDialog(const char *szFile, int iLine, const char *szExpr)
     dbgForceToMemory = &szExpr;
 
     RaiseExceptionOnAssert(rTestAndRaise);
-
-    if (DebugBreakOnAssert())
-    {
-        DebugBreak();
-    }
 
     BOOL fConstrained = FALSE;
 
@@ -865,6 +783,16 @@ bool GetStackTraceAtContext(SString & s, CONTEXT * pContext)
 } // GetStackTraceAtContext
 #endif // !defined(DACCESS_COMPILE)
 #endif // _DEBUG
+
+BOOL NoGuiOnAssert()
+{
+    STATIC_CONTRACT_NOTHROW;
+    STATIC_CONTRACT_GC_NOTRIGGER;
+    STATIC_CONTRACT_DEBUG_ONLY;
+
+    static ConfigDWORD fNoGui;
+    return fNoGui.val(CLRConfig::INTERNAL_NoGuiOnAssert);
+}
 
 // This helper will throw up a message box without allocating or using stack if possible, and is
 // appropriate for either low memory or low stack situations.

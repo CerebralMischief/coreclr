@@ -4,7 +4,7 @@
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
-    <AssemblyName>Test</AssemblyName>
+    <AssemblyName>test</AssemblyName>
     <SchemaVersion>2.0</SchemaVersion>
     <ProjectGuid>{CDA666E1-9A22-4795-9FBD-3B3FAEB759A4}</ProjectGuid>
     <OutputType>Exe</OutputType>
@@ -28,11 +28,7 @@
     </CodeAnalysisDependentAssemblyPaths>
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Test.cs" />
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="app.config" />
-    <None Include="project.json" />
+    <Compile Include="test.cs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="assem.csproj">

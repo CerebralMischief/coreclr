@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 // 
 
@@ -20,27 +19,31 @@
 #define STATUS_UNWIND_UNSUPPORTED_VERSION   STATUS_UNSUCCESSFUL
 
 
-#define UPDATE_CONTEXT_POINTERS(Params, RegisterNumber, Address)                \
-do {                                                                            \
-    PT_KNONVOLATILE_CONTEXT_POINTERS ContextPointers = (Params)->ContextPointers; \
-    if (ARGUMENT_PRESENT(ContextPointers)) {                                    \
-        if (RegisterNumber >=  4 && RegisterNumber <= 11) {                     \
-            (&ContextPointers->R4)[RegisterNumber - 4] = (PULONG)Address;       \
-        } else if (RegisterNumber == 14) {                                      \
-            ContextPointers->Lr = (PULONG)Address;                              \
-        }                                                                       \
-    }                                                                           \
+#define UPDATE_CONTEXT_POINTERS(Params, RegisterNumber, Address)                    \
+do {                                                                                \
+    if (ARGUMENT_PRESENT(Params)) {                                                 \
+        PT_KNONVOLATILE_CONTEXT_POINTERS ContextPointers = (Params)->ContextPointers; \
+        if (ARGUMENT_PRESENT(ContextPointers)) {                                    \
+            if (RegisterNumber >=  4 && RegisterNumber <= 11) {                     \
+                (&ContextPointers->R4)[RegisterNumber - 4] = (PULONG)Address;       \
+            } else if (RegisterNumber == 14) {                                      \
+                ContextPointers->Lr = (PULONG)Address;                              \
+            }                                                                       \
+        }                                                                           \
+    }                                                                               \
 } while (0)
 
-#define UPDATE_FP_CONTEXT_POINTERS(Params, RegisterNumber, Address)             \
-do {                                                                            \
-    PT_KNONVOLATILE_CONTEXT_POINTERS ContextPointers = (Params)->ContextPointers; \
-    if (ARGUMENT_PRESENT(ContextPointers) &&                                    \
-        (RegisterNumber >=  8) &&                                               \
-        (RegisterNumber <= 15)) {                                               \
-                                                                                \
-        (&ContextPointers->D8)[RegisterNumber - 8] = (PULONGLONG)Address;       \
-    }                                                                           \
+#define UPDATE_FP_CONTEXT_POINTERS(Params, RegisterNumber, Address)                 \
+do {                                                                                \
+    if (ARGUMENT_PRESENT(Params)) {                                                 \
+        PT_KNONVOLATILE_CONTEXT_POINTERS ContextPointers = (Params)->ContextPointers; \
+        if (ARGUMENT_PRESENT(ContextPointers) &&                                    \
+            (RegisterNumber >=  8) &&                                               \
+            (RegisterNumber <= 15)) {                                               \
+                                                                                    \
+            (&ContextPointers->D8)[RegisterNumber - 8] = (PULONGLONG)Address;       \
+        }                                                                           \
+    }                                                                               \
 } while (0)
 
 #define VALIDATE_STACK_ADDRESS(Params, Context, DataSize, Alignment, OutStatus)
@@ -1498,7 +1501,7 @@ PEXCEPTION_ROUTINE RtlVirtualUnwind(
     __in ULONG HandlerType,
     __in ULONG ImageBase,
     __in ULONG ControlPc,
-    __in PRUNTIME_FUNCTION FunctionEntry,
+    __in PT_RUNTIME_FUNCTION FunctionEntry,
     __in OUT PCONTEXT ContextRecord,
     __out PVOID *HandlerData,
     __out PULONG EstablisherFrame,

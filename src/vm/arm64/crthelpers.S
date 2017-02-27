@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 // ==++==
 //
@@ -19,7 +18,7 @@
 //
 //void JIT_MemSet(void *dst, int val, SIZE_T count)
 //
-//    uintptr_t valEx = (char)val;
+//    uintptr_t valEx = (unsigned char)val;
 //    valEx = valEx | valEx << 8;
 //    valEx = valEx | valEx << 16;
 //    valEx = valEx | valEx << 32;
@@ -53,7 +52,7 @@
 //        }
 //    }
 //
-//    while(count > 8)
+//    while(count >= 8)
 //    {
 //        *(uintptr_t*)dst = valEx;
 //        dst = (uintptr_t*)dst + 1;
@@ -86,7 +85,7 @@
 // as C++ method.
 
 LEAF_ENTRY JIT_MemSet, _TEXT
-    sxtb        w8,w1
+    uxtb        w8,w1
     sxtw        x8,w8
     orr         x8,x8,x8, lsl #8
     orr         x8,x8,x8, lsl #0x10
@@ -122,11 +121,9 @@ LOCAL_LABEL(JIT_MemSet_0x60):
     cbnz        x2,LOCAL_LABEL(JIT_MemSet_0x60)
 LOCAL_LABEL(JIT_MemSet_0x7c):
     cmp         x2,#8
-    bls         LOCAL_LABEL(JIT_MemSet_0xb8)
-    mov         x8,#-9
-    add         x8,x2,x8
-    lsr         x8,x8,#3
-    add         x11,x8,#1
+    blo         LOCAL_LABEL(JIT_MemSet_0xb8)
+    lsr         x8,x2,#3
+    mov         x11,x8
     mov         x10,x0
     add         x8,x10,x11, lsl #3
 LOCAL_LABEL(JIT_MemSet_0x9c):
@@ -151,7 +148,7 @@ LOCAL_LABEL(JIT_MemSet_0xd0):
     strb        w9,[x0]
 LOCAL_LABEL(JIT_MemSet_0xd8):
     ret         lr
-LEAF_END JIT_MemSet, _TEXT
+LEAF_END_MARKED JIT_MemSet, _TEXT
 
 // See comments above for JIT_MemSet
 
@@ -189,7 +186,7 @@ LEAF_END JIT_MemSet, _TEXT
 //        }
 //    }
 //
-//    while(count > 8)
+//    while(count >= 8)
 //    {
 //        *(uintptr_t*)dst = *(uintptr_t*)src;
 //        dst = (uintptr_t*)dst + 1;
@@ -258,11 +255,8 @@ LOCAL_LABEL(JIT_MemCpy_0x5c):
     cbnz        x2,LOCAL_LABEL(JIT_MemCpy_0x5c)
 LOCAL_LABEL(JIT_MemCpy_0x80):
     cmp         x2,#8
-    bls         LOCAL_LABEL(JIT_MemCpy_0xb4)
-    mov         x8,#-9
-    add         x8,x2,x8
-    lsr         x8,x8,#3
-    add         x9,x8,#1
+    blo         LOCAL_LABEL(JIT_MemCpy_0xb4)
+    lsr         x9,x2,#3
     mov         x8,#-8
     madd        x2,x9,x8,x2
 LOCAL_LABEL(JIT_MemCpy_0xa0):
@@ -289,4 +283,4 @@ LOCAL_LABEL(JIT_MemCpy_0xdc):
     strb        w8,[x0]
 LOCAL_LABEL(JIT_MemCpy_0xe8):
     ret         lr
-LEAF_END JIT_MemCpy, _TEXT
+LEAF_END_MARKED JIT_MemCpy, _TEXT

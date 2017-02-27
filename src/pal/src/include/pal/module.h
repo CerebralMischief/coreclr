@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*++
 
@@ -25,18 +24,6 @@ Abstract:
 extern "C"
 {
 #endif // __cplusplus
-
-#define PAL_SHLIB_PREFIX "lib"
-
-#if __APPLE__
-#define PAL_SHLIB_SUFFIX ".dylib"
-#elif _AIX
-#define PAL_SHLIB_SUFFIX ".a"
-#elif _HPUX_
-#define PAL_SHLIB_SUFFIX ".sl"
-#else
-#define PAL_SHLIB_SUFFIX ".so"
-#endif
 
 typedef BOOL (__stdcall *PDLLMAIN)(HINSTANCE, DWORD, LPVOID);   /* entry point of module */
 typedef HINSTANCE (PALAPI *PREGISTER_MODULE)(LPCSTR);           /* used to create the HINSTANCE for above DLLMain entry point */
@@ -95,19 +82,6 @@ Return value :
 
 --*/
 BOOL LOADSetExeName(LPWSTR name);
-
-/*++
-Function :
-    LOADFreeModules
-
-    Release all resources held by the module manager (including dlopen handles)
-
-Parameters:
-    BOOL bTerminateUnconditionally: If TRUE, this will avoid calling any DllMains
-
-    (no return value)
---*/
-void LOADFreeModules(BOOL bTerminateUnconditionally);
 
 /*++
 Function :

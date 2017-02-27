@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*++
 
@@ -505,23 +504,29 @@ PALAPI
 GetSystemTimeAsFileTime(
             OUT LPFILETIME lpSystemTimeAsFileTime)
 {
-    struct timeval Time;
-
     PERF_ENTRY(GetSystemTimeAsFileTime);
     ENTRY("GetSystemTimeAsFileTime(lpSystemTimeAsFileTime=%p)\n", 
           lpSystemTimeAsFileTime);
 
-    if ( gettimeofday( &Time, NULL ) != 0 )
+#if HAVE_WORKING_CLOCK_GETTIME
+    struct timespec Time;
+    if (clock_gettime(CLOCK_REALTIME, &Time) == 0)
     {
-        ASSERT("gettimeofday() failed");
-        /* no way to indicate failure, so set time to zero */
-        *lpSystemTimeAsFileTime = FILEUnixTimeToFileTime( 0, 0 );
+        *lpSystemTimeAsFileTime = FILEUnixTimeToFileTime( Time.tv_sec, Time.tv_nsec );
     }
-    else
+#else
+    struct timeval Time;
+    if (gettimeofday(&Time, NULL) == 0)
     {
         /* use (tv_usec * 1000) because 2nd arg is in nanoseconds */
-        *lpSystemTimeAsFileTime = FILEUnixTimeToFileTime( Time.tv_sec,
-                                                          Time.tv_usec * 1000 );
+        *lpSystemTimeAsFileTime = FILEUnixTimeToFileTime( Time.tv_sec, Time.tv_usec * 1000);
+    }
+#endif
+    else
+    {
+        /* no way to indicate failure, so set time to zero */
+        ASSERT("clock_gettime or gettimeofday failed");
+        *lpSystemTimeAsFileTime = FILEUnixTimeToFileTime( 0, 0 );
     }
 
     LOGEXIT("GetSystemTimeAsFileTime returns.\n");

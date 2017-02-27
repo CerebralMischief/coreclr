@@ -1,17 +1,12 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /******************************************************************
 *                                                                 *
 *  intsafe.h -- This module defines helper functions to prevent   *
 *               integer overflow issues.                          *
 *                                                                 *
-*  Copyright (c) Microsoft Corp.  All rights reserved.            *
-*                                                                 *
-*                                                                 *
-
 *                                                                 *
 ******************************************************************/
 #ifndef _INTSAFE_H_INCLUDED_
@@ -43,47 +38,6 @@ UnsignedMultiply128 (
 #endif
 #endif // _AMD64_
 
-#ifndef FEATURE_PAL
-
-#ifdef  _WIN64
-typedef unsigned __int64    size_t;
-typedef unsigned __int64    UINT_PTR;
-typedef unsigned __int64    ULONG_PTR;
-typedef unsigned __int64    DWORD_PTR;
-typedef unsigned __int64    SIZE_T;
-#else
-typedef __w64 unsigned int  size_t;
-typedef __w64 unsigned int  UINT_PTR;
-typedef __w64 unsigned long ULONG_PTR;
-typedef __w64 unsigned long DWORD_PTR;
-typedef __w64 unsigned long SIZE_T;
-#endif
-typedef          char       CHAR;
-typedef          int        INT;
-typedef          long       LONG;
-typedef unsigned char       UCHAR;
-typedef unsigned short      USHORT;
-typedef unsigned short      WORD;
-typedef unsigned int        UINT;
-typedef unsigned long       ULONG;
-typedef unsigned long       DWORD;
-typedef unsigned __int64    ULONGLONG;
-
-
-typedef LONG HRESULT;
-
-#ifndef SUCCEEDED
-#define SUCCEEDED(hr) (((HRESULT)(hr)) >= 0)
-#endif
-
-#ifndef FAILED
-#define FAILED(hr) (((HRESULT)(hr)) < 0)
-#endif
-
-#define S_OK ((HRESULT)0x00000000L)
-
-#endif // !FEATURE_PAL
-
 #define INTSAFE_E_ARITHMETIC_OVERFLOW       ((HRESULT)0x80070216L)  // 0x216 = 534 = ERROR_ARITHMETIC_OVERFLOW
 
 #ifndef LOWORD
@@ -98,8 +52,7 @@ typedef LONG HRESULT;
 #define LODWORD(_qw)    ((ULONG)(_qw))
 
 #if defined(MIDL_PASS) || defined(RC_INVOKED) || defined(_M_CEE_PURE) \
-    || defined(_68K_) || defined(_MPPC_) || defined(_PPC_)            \
-    || defined(_M_IA64) || defined(_M_AMD64) || defined(__ARM_ARCH)
+    || defined(_M_AMD64) || defined(__ARM_ARCH)
 
 #ifndef UInt32x32To64
 #define UInt32x32To64(a, b) ((unsigned __int64)((ULONG)(a)) * (unsigned __int64)((ULONG)(b)))

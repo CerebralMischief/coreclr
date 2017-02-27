@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 
 
@@ -17,6 +16,7 @@
 #define g_ArrayClassName "System.Array"
 
 #define g_NullableName "Nullable`1"
+#define g_ByReferenceName "ByReference`1"
 
 #define g_CollectionsEnumerableItfName "System.Collections.IEnumerable"
 #define g_CollectionsEnumeratorClassName "System.Collections.IEnumerator"
@@ -66,9 +66,6 @@
 #define g_PropertyChangedEventHandler_WinRT_Name "System.Runtime.InteropServices.WindowsRuntime.PropertyChangedEventHandler_WinRT"
 #endif // FEATURE_COMINTEROP
 
-#ifdef FEATURE_REMOTING
-#define g_ContextBoundObjectClassName "System.ContextBoundObject"
-#endif
 
 #define g_DateClassName "System.DateTime"
 #define g_DateTimeOffsetClassName "System.DateTimeOffset"
@@ -150,31 +147,24 @@
 #define g_CompilerServicesUnsafeValueTypeAttribute "System.Runtime.CompilerServices.UnsafeValueTypeAttribute"
 #define g_UnmanagedFunctionPointerAttribute "System.Runtime.InteropServices.UnmanagedFunctionPointerAttribute"
 #define g_DefaultDllImportSearchPathsAttribute "System.Runtime.InteropServices.DefaultDllImportSearchPathsAttribute"
+#define g_NativeCallableAttribute "System.Runtime.InteropServices.NativeCallableAttribute"
 
 #define g_CompilerServicesTypeDependencyAttribute "System.Runtime.CompilerServices.TypeDependencyAttribute"
 
 #define g_SecurityCriticalAttribute "System.Security.SecurityCriticalAttribute"
 #define g_SecurityTransparentAttribute "System.Security.SecurityTransparentAttribute"
-#ifndef FEATURE_CORECLR
-#define g_SecurityTreatAsSafeAttribute "System.Security.SecurityTreatAsSafeAttribute"
-#define g_SecurityRulesAttribute "System.Security.SecurityRulesAttribute"
-#endif //FEATURE_CORECLR
 
 #define g_SecuritySafeCriticalAttribute "System.Security.SecuritySafeCriticalAttribute"
 
-#if defined(FEATURE_APTCA) || defined(FEATURE_CORESYSTEM)
+#if defined(FEATURE_CORESYSTEM)
 #define g_SecurityAPTCA "System.Security.AllowPartiallyTrustedCallersAttribute"
 #define g_SecurityPartialTrustVisibilityLevel "System.Security.PartialTrustVisibilityLevel"
 #define g_PartialTrustVisibilityLevel "PartialTrustVisibilityLevel"
-#endif // defined(FEATURE_APTCA) || defined(FEATURE_CORESYSTEM)
+#endif // defined(FEATURE_CORESYSTEM)
 
 #define g_ReferenceAssemblyAttribute "System.Runtime.CompilerServices.ReferenceAssemblyAttribute"
 
 #define g_CriticalFinalizerObjectName "CriticalFinalizerObject"
-
-#ifdef FEATURE_SERIALIZATION
-#define g_StreamingContextName "StreamingContext"
-#endif
 
 #define g_AssemblySignatureKeyAttribute "System.Reflection.AssemblySignatureKeyAttribute"
 

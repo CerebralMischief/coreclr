@@ -27,7 +27,7 @@ Written in 2006, by:
     * [2.1.10 How to know if a function can trigger a GC](#2.1.10)
       * [2.1.10.1 GC_NOTRIGGER/TRIGGERSGC on a scope](#2.1.10.1)
   * [2.2 Are you using holders to track your resources?](#2.2)
-    * [2.2.1 What are holders and we are they important?](#2.2.1)
+    * [2.2.1 What are holders and why are they important?](#2.2.1)
     * [2.2.2 An example of holder usage:](#2.2.2)
     * [2.2.3 Common Features of Holders](#2.2.3)
     * [2.2.4 Where do I find a holder?](#2.2.4)
@@ -462,7 +462,7 @@ One difference between the standalone TRIGGERSGC and the contract GC_TRIGGERS: t
 
 ## <a name="2.2"/>2.2 Are you using holders to track your resources?
 
-### <a name="2.2.1"/>2.2.1 What are holders and we are they important?
+### <a name="2.2.1"/>2.2.1 What are holders and why are they important?
 
 The CLR team has coined the name **holder** to refer to the infrastructure that encapsulates the common grunt work of writing robust **backout code**. **Backout code** is code that deallocate resources or restore CLR data structure consistency when we abort an operation due to an error or an asynchronous event. Oftentimes, the same backout code will execute in non-error paths for resources allocated for use of a single scope, but error-time backout is still needed even for longer lived resources.
 
@@ -616,6 +616,7 @@ Holders consistently release on destruction – that's their whole purpose. Sadl
 #### <a name="2.2.8.4"/>2.2.8.4 Critical Section Holder
 
 **Wrong:**
+
 	pCrst->Enter();
 	pCrst->Leave();
 
@@ -1162,7 +1163,7 @@ These declare whether a function or callee deals with the case "GetThread() == N
 
 EE_THREAD_REQUIRED simply asserts that GetThread() != NULL.
 
-EE_THREAD_NOT_REQUIRED is a noop by default. You must "set COMPLUS_EnforceEEThreadNotRequiredContracts=1" for this to be enforced. Setting the envvar forces a C version of GetThread() to be used, instead of the optimized assembly versions. This C GetThread() always asserts in an EE_THREAD_NOT_REQUIRED scope regardless of whether there actually is an EE Thread available or not. The reason is that if you claim you don't require an EE Thread, then you have no business asking for it (even if you get lucky and there happens to be an EE Thread available).
+EE_THREAD_NOT_REQUIRED is a noop by default. You must "set COMPlus_EnforceEEThreadNotRequiredContracts=1" for this to be enforced. Setting the envvar forces a C version of GetThread() to be used, instead of the optimized assembly versions. This C GetThread() always asserts in an EE_THREAD_NOT_REQUIRED scope regardless of whether there actually is an EE Thread available or not. The reason is that if you claim you don't require an EE Thread, then you have no business asking for it (even if you get lucky and there happens to be an EE Thread available).
 
 Of course, there are exceptions to this. In particular, if there is a clear code path for GetThread() == NULL, then it's ok to call GetThread() in an EE_THREAD_NOT_REQUIRED scope. You declare your intention by using GetThreadNULLOk():
 

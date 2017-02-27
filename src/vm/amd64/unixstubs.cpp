@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 #include "common.h"
 
@@ -12,17 +11,17 @@ extern "C"
         PORTABILITY_ASSERT("Implement for PAL");
     }
 
-    void NakedThrowHelper()
+    void ProfileEnterNaked(FunctionIDOrClientID functionIDOrClientID)    
     {
         PORTABILITY_ASSERT("Implement for PAL");
     }
 
-    void PInvokeStubForHost()
+    void ProfileLeaveNaked(FunctionIDOrClientID functionIDOrClientID)
     {
         PORTABILITY_ASSERT("Implement for PAL");
     }
 
-    void PInvokeStubForHostInner(DWORD dwStackSize, LPVOID pStackFrame, LPVOID pTarget)
+    void ProfileTailcallNaked(FunctionIDOrClientID functionIDOrClientID)
     {
         PORTABILITY_ASSERT("Implement for PAL");
     }
@@ -38,7 +37,7 @@ extern "C"
               "  mov %%edx, 12(%[result])\n" \
             : "=a"(eax) /*output in eax*/\
             : "a"(arg), [result]"r"(result) /*inputs - arg in eax, result in any register*/\
-            : "eax", "rbx", "ecx", "edx" /* registers that are clobbered*/
+            : "eax", "rbx", "ecx", "edx", "memory" /* registers that are clobbered, *result is clobbered */
           );
         return eax;
     }
@@ -53,7 +52,7 @@ extern "C"
               "  mov %%edx, 12(%[result])\n" \
             : "=a"(eax) /*output in eax*/\
             : "c"(arg1), "a"(arg2), [result]"r"(result) /*inputs - arg1 in ecx, arg2 in eax, result in any register*/\
-            : "eax", "rbx", "ecx", "edx" /* registers that are clobbered*/
+            : "eax", "rbx", "ecx", "edx", "memory" /* registers that are clobbered, *result is clobbered */
           );
         return eax;
     }

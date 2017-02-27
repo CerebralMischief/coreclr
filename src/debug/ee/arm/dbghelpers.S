@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 #include "unixasmmacros.inc"
 
@@ -15,10 +14,7 @@
 //   r0  : pointer to DebuggerEval object
 //
 
-NESTED_ENTRY FuncEvalHijack, _TEXT, FuncEvalHijackPersonalityRoutine
-
-    // NOTE: FuncEvalHijackPersonalityRoutine is dependent on the stack layout so if
-    //       you change the prolog you will also need to update the personality routine.
+NESTED_ENTRY FuncEvalHijack, _TEXT, UnhandledExceptionHandlerUnix
 
     // push arg to the stack so our personality routine can find it
     // push lr to get good stacktrace in debugger
@@ -48,7 +44,7 @@ NESTED_END FuncEvalHijack, _TEXT
 //   r3 : void* pdata
 //
 
-NESTED_ENTRY ExceptionHijack, _TEXT, ExceptionHijackPersonalityRoutine
+NESTED_ENTRY ExceptionHijack, _TEXT, UnhandledExceptionHandlerUnix
 
     CHECK_STACK_ALIGNMENT
 

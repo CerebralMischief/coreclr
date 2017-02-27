@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*****************************************************************************\
 *                                                                             *
@@ -277,8 +276,8 @@ private:
             }
 #endif // !FEATURE_CORESYSTEM
 
-            WCHAR objectName[MAX_LONGPATH];
-            WCHAR objectNamePrefix[MAX_LONGPATH];
+            WCHAR objectName[MAX_LONGPATH] = {0};
+            WCHAR objectNamePrefix[MAX_LONGPATH] = {0};
             GetObjectNamePrefix(processID, fromRuntime, objectNamePrefix);
             // if there is a non-empty name prefix, append a '\'
             if (objectNamePrefix[0] != '\0')
@@ -337,7 +336,7 @@ cleanup:
     void GetObjectNamePrefix(DWORD processID, BOOL fromRuntime, __inout_z WCHAR* objectNamePrefix)
     {
         // default prefix
-        swprintf_s(objectNamePrefix, MAX_PATH, W("Global"));
+        swprintf_s(objectNamePrefix, MAX_LONGPATH, W("Global"));
 #ifndef FEATURE_PAL
         //
         // This method can be called:

@@ -22,11 +22,12 @@ Install the following packages for the toolchain:
 - llvm37 (includes LLVM 3.7, Clang 3.7 and LLDB 3.7)
 - libunwind
 - gettext
+- icu
 
 To install the packages you need:
 
 ```sh
-janhenke@freebsd-frankfurt:~ % sudo pkg install bash cmake libunwind gettext llvm37
+janhenke@freebsd-frankfurt:~ % sudo pkg install bash cmake libunwind gettext llvm37 icu
 ```
 
 The command above will install Clang and LLVM 3.7. For information on building CoreCLR with other versions, see section on [Clang/LLVM versions](#note-on-clangllvm-versions).
@@ -66,6 +67,14 @@ janhenke@freebsd-frankfurt:~/git/coreclr % ./build.sh
 
 Note: FreeBSD 10.1-RELEASE system's Clang/LLVM is 3.4, the minimum version to compile CoreCLR runtime is 3.5. See [Note on Clang/LLVM versions](#note-on-clangllvm-versions).
 
+If the build fails with errors about resolving LLVM-components, the default Clang-version assumed (3.5) may not be appropriate for your system.
+Override it using the following syntax. In this example LLVM 3.6 is used:
+
+```sh
+janhenke@freebsd-frankfurt:~/git/coreclr % ./build.sh clang3.6
+```
+
+
 After the build is completed, there should some files placed in `bin/Product/FreeBSD.x64.Debug`.  The ones we are interested in are:
 
 * `corerun`: The command line host.  This program loads and starts the CoreCLR runtime and passes the managed program you want to run to it.
@@ -84,7 +93,7 @@ Build the Framework Native Components
 ======================================
 
 ```sh
-janhenke@freebsd-frankfurt:~/git/corefx$ src/Native/build.sh
+janhenke@freebsd-frankfurt:~/git/corefx$ ./build-native.sh
 janhenke@freebsd-frankfurt:~/git/corefx$ cp bin/FreeBSD.x64.Debug/Native/*.so ~/coreclr-demo/runtime
 ```
 
@@ -104,7 +113,7 @@ The output is placed in `bin\Product\FreeBSD.x64.Debug\mscorlib.dll`.  You'll wa
 For the rest of the framework, you need to pass some special parameters to build.cmd when building out of the CoreFX repository.
 
 ```
-D:\git\corefx> build.cmd /p:OSGroup=Linux /p:SkipTests=true
+D:\git\corefx> build-managed.cmd -os=Linux -target-os=Linux -SkipTests
 ```
 
 Note: We are using the Linux build currently, as CoreFX does not yet know about FreeBSD.
@@ -264,3 +273,10 @@ To install clang development snapshot: `sudo pkg install llvm-devel`
 clang35 and clang36 download llvm35 and llvm36 packages as a dependency. 
 
 llvm37 and llvm-devel include clang and lldb. Since clang is included with llvm 3.7 and onward, there is no clang37 package.
+
+After you have installed your desired version of LLVM you will need to specify the version to the build.sh script.
+
+For example if you chose to install llvm37 you would add the clangX.X to your build command as follows.
+```sh
+janhenke@freebsd-frankfurt:~/git/coreclr % ./build.sh clang3.7
+```

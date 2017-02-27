@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 // FILE: dwreport.cpp
 //
@@ -30,10 +29,6 @@
 
 #include "imagehlp.h"
 
-#ifdef FEATURE_UEF_CHAINMANAGER
-// This is required to register our UEF callback with the UEF chain manager
-#include <mscoruefwrapper.h>
-#endif // FEATURE_UEF_CHAINMANAGER
 
 EFaultRepRetVal DoReportFault(EXCEPTION_POINTERS * pExceptionInfo);
 
@@ -43,9 +38,7 @@ static BOOL g_watsonErrorReportingEnabled = FALSE;
 // Variables to control launching Watson only once, but making all threads wait for that single launch to finish.
 LONG g_watsonAlreadyLaunched = 0; // Used to note that another thread has done Watson.
 
-#if !defined(FEATURE_UEF_CHAINMANAGER)
 HandleHolder g_hWatsonCompletionEvent = NULL; // Used to signal that Watson has finished.
-#endif // FEATURE_UEF_CHAINMANAGER
 
 const WCHAR kErrorReportingPoliciesKey[] = W("SOFTWARE\\Policies\\Microsoft\\PCHealth\\ErrorReporting");
 const WCHAR kErrorReportingKey[] = W("SOFTWARE\\Microsoft\\PCHealth\\ErrorReporting");
@@ -178,14 +171,10 @@ BOOL InitializeWatson(COINITIEE fFlags)
         return TRUE;
     }
 
-#if defined(FEATURE_UEF_CHAINMANAGER)
-    return TRUE;
-#else
     // Create the event that all-but-the-first threads will wait on (the first thread
     // will set the event when Watson is done.)
     g_hWatsonCompletionEvent = WszCreateEvent(NULL, TRUE /*manual reset*/, FALSE /*initial state*/, NULL);
     return (g_hWatsonCompletionEvent != NULL);
-#endif // FEATURE_UEF_CHAINMANAGER
 
 } // BOOL InitializeWatson()
 
@@ -215,15 +204,6 @@ BOOL RegisterOutOfProcessWatsonCallbacks()
     CONTRACTL_END;
     
     WCHAR wszDACName[] = MAIN_DAC_MODULE_NAME_W W(".dll");
-    WCHAR wszDACPath[MAX_LONGPATH];
-    DWORD dwSize = 0;
-
-    if ((FAILED(::GetCORSystemDirectoryInternal(wszDACPath, NumItems(wszDACPath), &dwSize))) || 
-        (wcscat_s(wszDACPath, _countof(wszDACPath), wszDACName) != 0))
-    {
-        return FALSE;
-    }
-
     WerModuleHolder hWerModule(WER_MODULE_NAME_W);
 
 #ifdef FEATURE_CORESYSTEM
@@ -251,8 +231,23 @@ BOOL RegisterOutOfProcessWatsonCallbacks()
     {
        return FALSE;
     }
+    HRESULT hr = S_OK;
 
-    HRESULT hr = (*pFnWerRegisterRuntimeExceptionModule)(wszDACPath, (PDWORD)g_pMSCorEE);
+    EX_TRY
+    {
+        PathString wszDACPath;
+        if (SUCCEEDED(::GetCORSystemDirectoryInternaL(wszDACPath)))
+        {
+            wszDACPath.Append(wszDACName);
+            hr = (*pFnWerRegisterRuntimeExceptionModule)(wszDACPath, (PDWORD)g_pMSCorEE);
+        }
+        else {
+            hr = E_FAIL;
+        }
+
+    }
+    EX_CATCH_HRESULT(hr);
+    
     if (FAILED(hr))
     {
         STRESS_LOG0(LF_STARTUP, 
@@ -563,9 +558,9 @@ HRESULT DwCheckCompany(                 // S_OK or error.
 //   None
 //------------------------------------------------------------------------------
 int DwGetAppDescription(                // Number of characters written.
-    __in_z LPWSTR wszFilePath,          // Path to the executable.
-    __inout_ecount(cchBuf) WCHAR *pBuf, // Put description here.
-    int     cchBuf)                     // Size of buf, wide chars.
+    __in_z LPCWSTR wszFilePath,          // Path to the executable.
+    SString& pBuf // Put description here.
+    )                     // Size of buf, wide chars.
 {
     CONTRACTL
     {
@@ -664,8 +659,17 @@ int DwGetAppDescription(                // Number of characters written.
     }
 
     // Copy back the description.
-    size = (int)size > cchBuf-1 ? cchBuf-1 : size;
-    wcsncpy_s(pBuf, cchBuf, fileDescription, size);
+    EX_TRY
+    {
+        wcsncpy_s(pBuf.OpenUnicodeBuffer(size), size, fileDescription, size);
+        pBuf.CloseBuffer(size);
+    }
+        EX_CATCH
+    {
+        size = 0;
+    }
+    EX_END_CATCH(SwallowAllExceptions);
+    
 
     return size;
 } // int DwGetAppDescription()
@@ -686,7 +690,7 @@ int DwGetAppDescription(                // Number of characters written.
 //   None
 //------------------------------------------------------------------------------
 int DwGetAssemblyVersion(               // Number of characters written.
-    __in_z LPWSTR  wszFilePath,         // Path to the executable.
+    __in_z LPCWSTR  wszFilePath,         // Path to the executable.
     __inout_ecount(cchBuf) WCHAR *pBuf, // Put description here.
     int cchBuf)                     // Size of buf, wide chars.
 {
@@ -1470,88 +1474,85 @@ BOOL RunWatson(
     memset(&startupInfo, 0, sizeof(STARTUPINFOW));
     startupInfo.cb = sizeof(STARTUPINFOW);
 
-
-    WCHAR watsonAppName[MAX_LONGPATH];
-    WCHAR watsonCommandLine[MAX_LONGPATH+1];
-
+    HRESULT hr = S_OK;
+    PathString watsonAppName;
+    PathString watsonCommandLine;
+    EX_TRY
     {
-#if !defined(FEATURE_CORECLR)
-        // Use the version of DW20.exe that lives in the system directory.
-        DWORD ret;
-
-        if (FAILED(GetCORSystemDirectoryInternal(watsonAppName, NumItems(watsonAppName), &ret)))
+        do
         {
-            return false;
-        }
-        if (wcsncat_s(watsonAppName, NumItems(watsonAppName), kWatsonImageNameOnVista, _TRUNCATE) != 0)
+
+
+        
+
         {
-            return false;
-        }
-#else // FEATURE_CORECLR
-        HKEYHolder hKey;
-        // Look for key \\HKLM\Software\Microsoft\PCHealth\ErrorReporting\DW\Installed"
-        DWORD ret = WszRegOpenKeyEx(HKEY_LOCAL_MACHINE,
-                                    kWatsonPath,
-                                    0,
-                                    KEY_READ | kWatsonRegKeyOptions,
-                                    &hKey);
+            HKEYHolder hKey;
+            // Look for key \\HKLM\Software\Microsoft\PCHealth\ErrorReporting\DW\Installed"
+            DWORD ret = WszRegOpenKeyEx(HKEY_LOCAL_MACHINE,
+                                        kWatsonPath,
+                                        0,
+                                        KEY_READ | kWatsonRegKeyOptions,
+                                        &hKey);
 
-        if (ERROR_SUCCESS != ret)
+            if (ERROR_SUCCESS != ret)
+            {
+                hr = E_FAIL;
+                break;
+            }
+
+
+            // Look in ...\DW\Installed for dw0200 (dw0201 on ia64).  This will be
+            //  the full path to the executable.
+
+            ClrRegReadString(hKey, kWatsonValue, watsonAppName);
+
+
+            COUNT_T len = watsonCommandLine.GetCount();
+            WCHAR* buffer = watsonCommandLine.OpenUnicodeBuffer(len);
+            _snwprintf_s(buffer,
+                       len,
+                       _TRUNCATE,
+                       W("dw20.exe -x -s %lu"),
+                       PtrToUlong(hWatsonSharedMemory));
+            watsonCommandLine.CloseBuffer();
+
+        }
+        } while (false);
+    }
+    EX_CATCH_HRESULT(hr);
+
+
+    if (hr != S_OK)
+    {
+        return false;
+    }
+
         {
-            return false;
+            BOOL ret = WszCreateProcess(watsonAppName,
+                                        watsonCommandLine,
+                                        NULL,
+                                        NULL,
+                                        TRUE,
+                                        NULL,
+                                        NULL,
+                                        NULL,
+                                        &startupInfo,
+                                        &processInformation);
+
+            if (FALSE == ret)
+            {
+                //
+                // Watson failed to start up.
+                //
+                // This can happen if e.g. Watson wasn't installed on the machine.
+                //
+                 return  E_FAIL;
+                 
+            }
+
         }
-
-
-        // Look in ...\DW\Installed for dw0200 (dw0201 on ia64).  This will be
-        //  the full path to the executable.
-        DWORD size = NumItems(watsonAppName);
-        ret = WszRegQueryValueEx(hKey,
-                                    kWatsonValue,
-                                    NULL,
-                                    NULL,
-                                    reinterpret_cast< LPBYTE >(watsonAppName),
-                                    &size);
 
     
-        if (ERROR_SUCCESS != ret)
-        {
-            return false;
-        }
-#endif // ! FEATURE_CORECLR
-
-        _snwprintf_s(watsonCommandLine,
-                   NumItems(watsonCommandLine)-1,
-                   _TRUNCATE,
-                   W("dw20.exe -x -s %lu"),
-                   PtrToUlong(hWatsonSharedMemory));
-        watsonCommandLine[NumItems(watsonCommandLine) - 1] = W('\0');
-    }
-
-
-    {
-        BOOL ret = WszCreateProcess(watsonAppName,
-                                    watsonCommandLine,
-                                    NULL,
-                                    NULL,
-                                    TRUE,
-                                    NULL,
-                                    NULL,
-                                    NULL,
-                                    &startupInfo,
-                                    &processInformation);
-
-        if (FALSE == ret)
-        {
-            //
-            // Watson failed to start up.
-            //
-            // This can happen if e.g. Watson wasn't installed on the machine.
-            //
-            HRESULT hr = HRESULT_FROM_GetLastErrorNA();
-            return false;
-        }
-
-    }
 
     // Wait for watson to finish.
     //
@@ -1873,7 +1874,7 @@ HRESULT GetManagedBucketParametersForIp(
         // probably inside of mscorwks
         //
         // Note that while there may be an actual managed exception that
-        // occured, we can live without the managed bucket parameters. For
+        // occurred, we can live without the managed bucket parameters. For
         // exceptions coming from within mscorwks.dll, the native bucket
         // parameters will do just fine.
 
@@ -1882,14 +1883,6 @@ HRESULT GetManagedBucketParametersForIp(
     }
 
     WatsonBucketType bucketType = GetWatsonBucketType();
-#ifndef FEATURE_CORECLR
-    if (bucketType == MoCrash)
-    {
-        MoCrashBucketParamsManager moCrashManager(pGenericModeBlock, tore, currentPC, pThread, pThrowable);
-        moCrashManager.PopulateBucketParameters();
-    }
-    else
-#endif // !FEATURE_CORECLR
     {
 #ifdef FEATURE_WINDOWSPHONE
         _ASSERTE(bucketType == WinPhoneCrash);
@@ -2028,11 +2021,9 @@ HRESULT RetrieveManagedBucketParameters(
 #if defined(PRESERVE_WATSON_ACROSS_CONTEXTS)
     GenericModeBlock *pBuckets = NULL;
 
-#ifdef FEATURE_CORECLR
     // On CoreCLR, Watson may not be enabled. Thus, we should
     // skip this.
     if (IsWatsonEnabled())
-#endif // FEATURE_CORECLR
     {
         if (pThread != NULL)
         {
@@ -2218,7 +2209,6 @@ FaultReportResult DoFaultReportWorker(      // Was Watson attempted, successful?
         return FaultReportResultQuit;
     }
 
-#if !defined(FEATURE_UEF_CHAINMANAGER)
     // If we've already tried to report a Watson crash once, we don't really
     // want to pester the user about this exception. This can occur in certain
     // pathological programs.
@@ -2234,7 +2224,6 @@ FaultReportResult DoFaultReportWorker(      // Was Watson attempted, successful?
             return FaultReportResultQuit;
         }
     }
-#endif // FEATURE_UEF_CHAINMANAGER
 
     // Assume an unmanaged fault until we determine otherwise.
     BOOL bIsManagedFault = FALSE;
@@ -2427,9 +2416,11 @@ FaultReportResult DoFaultReportWorker(      // Was Watson attempted, successful?
     pWatsonSharedMemory->bfmsoctdsLetRun = offerFlags;
 
     {
+        PathString wzModuleFileName;
         DWORD dwRet = WszGetModuleFileName(NULL,
-	                                       pWatsonSharedMemory->wzModuleFileName,
-	                                       NumItems(pWatsonSharedMemory->wzModuleFileName));
+	                                       wzModuleFileName);
+        BaseBucketParamsManager::CopyStringToBucket(pWatsonSharedMemory->wzModuleFileName, NumItems(pWatsonSharedMemory->wzModuleFileName), wzModuleFileName);
+        
         _ASSERTE(0 != dwRet);
         if (0 == dwRet)
         {
@@ -2456,24 +2447,24 @@ FaultReportResult DoFaultReportWorker(      // Was Watson attempted, successful?
     // do this just by using the executable name.
     //
     {
-        WCHAR   buf[_MAX_PATH];         // Buffer for path for description.
-        WCHAR   *pName = buf;           // Pointer to filename or description.
+        PathString   buf;         // Buffer for path for description.
+        LPCWSTR   pName ;           // Pointer to filename or description.
         int     size;                   // Size of description.
         HMODULE hModule;                // Handle to module.
         DWORD   result;                 // Return code
 
         // Get module name.
         hModule = WszGetModuleHandle(NULL);
-        result = WszGetModuleFileName(hModule, buf, NumItems(buf));
+        result = WszGetModuleFileName(hModule, buf);
 
         if (result == 0)
         {   // Couldn't get module name.  This should never happen.
-            wcscpy_s(buf, COUNTOF(buf), W("<<unknown>>"));
+            pName = W("<<unknown>>");
         }
         else
         {   // re-use the buf for pathname and description.
-            size = DwGetAppDescription(buf, buf, NumItems(buf));
-
+            size = DwGetAppDescription(buf, buf);
+            pName = buf.GetUnicode();
             // If the returned size was zero, buf wasn't changed, and still contains the path.
             //  find just the filename part.
             if (size == 0)
@@ -3067,7 +3058,6 @@ FaultReportResult DoFaultReport(            // Was Watson attempted, successful?
 
     Thread *pThread = GetThread();
 
-#ifdef FEATURE_CORECLR    
     // If watson isn't available (eg. in Silverlight), then use a simple dialog box instead
     if (!IsWatsonEnabled())
     {
@@ -3106,53 +3096,7 @@ FaultReportResult DoFaultReport(            // Was Watson attempted, successful?
 
         return fri.m_faultReportResult;
     } 
-#endif // FEATURE_CORECLR
 
-#ifdef FEATURE_UEF_CHAINMANAGER
-    if (g_pUEFManager && !tore.IsUserBreakpoint())
-    {
-        IWatsonSxSManager * pWatsonSxSManager = g_pUEFManager->GetWastonSxSManagerInstance();
-        
-        // Has Watson report been triggered?
-        if (pWatsonSxSManager->HasWatsonBeenTriggered())
-        {
-            LOG((LF_EH, LL_INFO100, "DoFaultReport: Watson has been triggered."));
-            LeaveRuntimeHolderNoThrow holder(reinterpret_cast< size_t >(WaitForSingleObject));
-            pWatsonSxSManager->WaitForWatsonSxSCompletionEvent();
-            return FaultReportResultQuit;
-        }
-        // The unhandled exception is thrown by the current runtime.
-        else if (IsExceptionFromManagedCode(pExceptionInfo->ExceptionRecord))   
-        {
-            // Is the current runtime allowed to report Watson?
-            if (!pWatsonSxSManager->IsCurrentRuntimeAllowedToReportWatson())
-            {
-                LOG((LF_EH, LL_INFO100, "DoFaultReport: Watson is reported by another runtime."));
-                LeaveRuntimeHolderNoThrow holder(reinterpret_cast< size_t >(WaitForSingleObject));
-                pWatsonSxSManager->WaitForWatsonSxSCompletionEvent();
-                return FaultReportResultQuit;
-            }
-        }
-        // The unhandled exception is thrown by another runtime in the process.
-        else if (pWatsonSxSManager->IsExceptionClaimed(pExceptionInfo->ExceptionRecord))
-        {
-            LOG((LF_EH, LL_INFO100, "DoFaultReport: Watson will be reported by another runtime.\n"));
-            return FaultReportResultQuit;
-        }
-        // The unhandled exception is thrown by native code.
-        else
-        {
-            // Is the current runtime allowed to report Watson?
-            if (!pWatsonSxSManager->IsCurrentRuntimeAllowedToReportWatson())
-            {
-                LOG((LF_EH, LL_INFO100, "DoFaultReport: Watson is reported by another runtime."));
-                LeaveRuntimeHolderNoThrow holder(reinterpret_cast< size_t >(WaitForSingleObject));
-                pWatsonSxSManager->WaitForWatsonSxSCompletionEvent();
-                return FaultReportResultQuit;
-            }
-        }
-    }
-#endif // FEATURE_UEF_CHAINMANAGER
 
     // Check if the current thread has the permission to open a process handle of the current process.
     // If not, the current thread may have been impersonated, we have to launch Watson from a new thread as in SO case.
@@ -3185,7 +3129,7 @@ FaultReportResult DoFaultReport(            // Was Watson attempted, successful?
             // thread under Coop mode, this will let the new generated DoFaultReportCallBack 
             // thread trigger a deadlock. So in this case, we should directly abort the fault 
             // report to avoid the deadlock.
-            ((IsGCThread() || pThread->PreemptiveGCDisabled()) && GCHeap::IsGCInProgress()) ||
+            ((IsGCThread() || pThread->PreemptiveGCDisabled()) && GCHeapUtilities::IsGCInProgress()) ||
              FAILED(g_pDebugInterface->RequestFavor(DoFaultReportFavorWorker, pData)))
         {
             // If we can't initialize the debugger helper thread or we are running on the debugger helper

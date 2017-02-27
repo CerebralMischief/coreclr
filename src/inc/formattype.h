@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 #ifndef _formatType_h
 #define _formatType_h
@@ -15,6 +14,8 @@
 #undef memcpy
 #endif
 #endif
+
+#define MAX_PREFIX_SIZE 32
 
 struct ParamDescriptor
 {
@@ -30,6 +31,10 @@ char* DumpMarshaling(IMDInternalImport* pImport,
 char* DumpParamAttr(__inout_ecount(cchszString) char* szString, 
                     DWORD cchszString, 
                     DWORD dwAttr);
+
+void appendStr(CQuickBytes *out, const char* str, unsigned len=(unsigned)-1);
+void insertStr(CQuickBytes *out, const char* str);
+char* asString(CQuickBytes *out);
 
 const char* PrettyPrintSig(
     PCCOR_SIGNATURE typePtr,            // type to convert,     
